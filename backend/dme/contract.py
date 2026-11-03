@@ -189,6 +189,41 @@ class CallRunner(Protocol):
     async def read_document(self, text: str, facts: list[FactSpec]) -> dict[str, Fact]: ...
 
 
+class PartyProvider(Protocol):
+    """Implemented by the server. Returns the autopilot persona or the human seat."""
+
+    def get(self, kind: PartyKind, party_id: str) -> Party: ...
+
+    def seat(self, kind: PartyKind) -> SeatMode: ...
+
+
+class AdvocateProvider(Protocol):
+    """Implemented by the server. Human seat waits for a "decide" message; autopilot
+    applies the scenario's scripted decision. Returns (option, note, fields)."""
+
+    async def decide(self, escalation: "Escalation") -> tuple[str, str | None, dict[str, str]]: ...
+
+
+Emit = Any  # async callable(msg: dict) -> None, msg shaped per the WebSocket protocol below
+
+# Engine public API (implemented in dme.engine.orchestrator):
+#
+#   class Engine:
+#       def __init__(self, *, patient: Patient, directory: list[DirectorySupplier],
+#                    call_runner: CallRunner, parties: PartyProvider, fax_desk: OfficeFaxDesk,
+#                    advocate: AdvocateProvider, emit: Emit,
+#                    start: datetime = datetime(2026, 11, 2, 9, 0)): ...
+#       async def run(self) -> None          # until CLOSED / ABANDONED, or cancelled
+#       def snapshot(self) -> CaseSnapshot
+#       def pause(self) -> None; def resume(self) -> None; def step(self) -> None
+#       def set_pace(self, seconds_between_events: float) -> None   # 0 = as fast as possible
+#       def now(self) -> datetime                                   # simulated clock
+#
+#   The engine emits "event", "snapshot", "escalation", "fax", "call_started", "call_ended".
+#   The LLM call runner emits "utterance" and "facts" through hooks the server wires in.
+#   Human seats (server) emit "ringing", "your_turn", "fax_requested".
+
+
 # ---------------------------------------------------------------------------
 # Escalations and the timeline
 # ---------------------------------------------------------------------------
