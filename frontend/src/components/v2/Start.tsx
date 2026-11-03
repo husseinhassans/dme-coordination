@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { HeartHandshake, PlayCircle, Radio, Stethoscope, Truck, UserRound } from "lucide-react";
+import { Headphones, HeartHandshake, PlayCircle, Radio, Stethoscope, Truck, UserRound } from "lucide-react";
 import type { SeatKey } from "../../types";
 
-export type Plan = { source: "replay" } | { source: "live"; play: SeatKey[] };
+export type Plan = { source: "replay"; listen: boolean } | { source: "live"; play: SeatKey[]; listen: boolean };
 
 const ROLES: { key: SeatKey; label: string; hint: string; Icon: typeof Truck }[] = [
   { key: "advocate", label: "Care advocate", hint: "Decide when the engine escalates", Icon: HeartHandshake },
@@ -11,8 +11,15 @@ const ROLES: { key: SeatKey; label: string; hint: string; Icon: typeof Truck }[]
   { key: "supplier", label: "Suppliers", hint: "Pick up when a supplier is called", Icon: Truck },
 ];
 
-export function StartScreen({ onGo, liveAvailable, onCancel }: { onGo: (p: Plan) => void; liveAvailable: boolean; onCancel?: () => void }) {
+export function StartScreen({ onGo, liveAvailable, onCancel, canListen }: { onGo: (p: Plan) => void; liveAvailable: boolean; onCancel?: () => void; canListen: boolean }) {
   const [play, setPlay] = useState<SeatKey[]>(["advocate"]);
+  const [listen, setListen] = useState(canListen);
+  const listenBox = canListen && (
+    <label className="mt-4 flex cursor-pointer items-center gap-2 text-[13px]">
+      <input type="checkbox" className="accent-[var(--accent)]" checked={listen} onChange={(e) => setListen(e.target.checked)} />
+      <Headphones size={14} className="text-muted" />Read the calls aloud
+    </label>
+  );
   const toggle = (k: SeatKey) => setPlay((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   return (
     <div className="mx-auto w-full max-w-[880px] px-6 py-10">
@@ -25,8 +32,9 @@ export function StartScreen({ onGo, liveAvailable, onCancel }: { onGo: (p: Plan)
       <div className="mt-8 grid gap-4 md:grid-cols-2">
         <div className="card flex flex-col p-5">
           <div className="flex items-center gap-2 text-[16px] font-semibold"><PlayCircle size={18} className="text-accent" />Watch a real run</div>
-          <p className="mt-1.5 flex-1 text-[13.5px] text-muted">A recorded run with live model calls: 23 calls over two simulated weeks, one hand-off to a person, chair delivered. Takes about three minutes. No setup.</p>
-          <button className="btn btn-primary mt-4 self-start px-4 py-1.5 text-[14px]" onClick={() => onGo({ source: "replay" })}>Watch the replay</button>
+          <p className="mt-1.5 flex-1 text-[13.5px] text-muted">A recorded run with live model calls: 23 calls over two simulated weeks, one hand-off to a person, chair delivered. About three minutes to read, longer to listen. No setup.</p>
+          {listenBox}
+          <button className="btn btn-primary mt-3 self-start px-4 py-1.5 text-[14px]" onClick={() => onGo({ source: "replay", listen })}>Watch the replay</button>
         </div>
         <div className="card flex flex-col p-5">
           <div className="flex items-center gap-2 text-[16px] font-semibold"><Radio size={18} className="text-human" />Run it live and play a part</div>
@@ -44,7 +52,7 @@ export function StartScreen({ onGo, liveAvailable, onCancel }: { onGo: (p: Plan)
               );
             })}
           </div>
-          <button className="btn btn-human mt-4 self-start px-4 py-1.5 text-[14px]" disabled={!liveAvailable} onClick={() => onGo({ source: "live", play })}>Start live run</button>
+          <button className="btn btn-human mt-4 self-start px-4 py-1.5 text-[14px]" disabled={!liveAvailable} onClick={() => onGo({ source: "live", play, listen })}>Start live run</button>
           {!liveAvailable && <p className="mt-2 text-[12px] text-muted">The engine server isn't running, so live runs are off. Start it with ./run.sh.</p>}
         </div>
       </div>

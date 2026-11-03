@@ -3,6 +3,7 @@ import type { CaseSnapshot, SeatKey } from "./types";
 import { useEngine, type LiveCall } from "./lib/useEngine";
 import { fmtDay } from "./lib/format";
 import { startRing, stopRing, unlockAudio } from "./lib/sound";
+import { speech } from "./lib/speech";
 import { CallView, FaxView } from "./components/CenterPane";
 import { HeardPanel } from "./components/RightColumn";
 import { Toasts } from "./components/Overlays";
@@ -27,6 +28,8 @@ export function App() {
   const [muted, setMuted] = useState(false);
   const [how, setHow] = useState(false);
   const [view, setView] = useState<View>(null);
+  const [listening, setListening] = useState(speech.enabled);
+  useEffect(() => speech.subscribe(setListening), []);
 
   const source = state.status === "replay" ? "replay" : state.status === "mock" ? "mock" : "live";
   useEffect(() => { if (state.status === "open") setLiveOk(true); }, [state.status]);
@@ -45,6 +48,7 @@ export function App() {
 
   const onGo = (p: Plan) => {
     unlockAudio();
+    speech.setEnabled(p.listen);
     setShowStart(false);
     setView(null);
     if (p.source === "replay" && state.status !== "replay") actions.useSource("replay");
@@ -81,11 +85,12 @@ export function App() {
       <Header snap={snap} sourceLabel={sourceLabel} started={started && !onStartScreen} speedIdx={speedIdx}
         onSpeed={(i) => { setSpeedIdx(i); actions.speed(SPEEDS[i].pace); }} onPause={actions.pause} onResume={actions.resume}
         onNewRun={() => { actions.pause(); setShowStart(true); }} how={how} onHow={() => setHow((h) => !h)}
-        muted={muted} onMute={() => { unlockAudio(); setMuted((m) => !m); }} showHow={!onStartScreen} />
+        muted={muted} onMute={() => { unlockAudio(); setMuted((m) => !m); }} showHow={!onStartScreen}
+        canListen={speech.supported && !onStartScreen} listening={listening} onListen={() => speech.setEnabled(!listening)} />
 
       {onStartScreen ? (
         <main className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-          <StartScreen onGo={onGo} liveAvailable={liveOk} onCancel={started ? () => { setShowStart(false); actions.resume(); } : undefined} />
+          <StartScreen canListen={speech.supported} onGo={onGo} liveAvailable={liveOk} onCancel={started ? () => { setShowStart(false); actions.resume(); } : undefined} />
         </main>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[248px_minmax(0,1fr)]">

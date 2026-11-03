@@ -1,13 +1,13 @@
-import { HeartPulse, Pause, Play, RotateCcw, Volume2, VolumeX, Workflow } from "lucide-react";
+import { Headphones, HeartPulse, Pause, Play, RotateCcw, Volume2, VolumeX, Workflow } from "lucide-react";
 import type { CaseSnapshot, Escalation } from "../../types";
 import { fmtDay, fmtTime } from "../../lib/format";
 import { headline } from "../../lib/plain";
 
 export const SPEEDS = [{ label: "1×", pace: 1.6 }, { label: "2×", pace: 0.8 }, { label: "4×", pace: 0.4 }];
 
-export function Header({ snap, sourceLabel, started, speedIdx, onSpeed, onPause, onResume, onNewRun, how, onHow, muted, onMute, showHow }: {
+export function Header({ snap, sourceLabel, started, speedIdx, onSpeed, onPause, onResume, onNewRun, how, onHow, muted, onMute, showHow, listening, onListen, canListen }: {
   snap: CaseSnapshot | null; sourceLabel: string; started: boolean; speedIdx: number; onSpeed: (i: number) => void; onPause: () => void; onResume: () => void;
-  onNewRun: () => void; how: boolean; onHow: () => void; muted: boolean; onMute: () => void; showHow: boolean;
+  onNewRun: () => void; how: boolean; onHow: () => void; muted: boolean; onMute: () => void; showHow: boolean; listening: boolean; onListen: () => void; canListen: boolean;
 }) {
   const running = !!snap?.running;
   return (
@@ -39,7 +39,13 @@ export function Header({ snap, sourceLabel, started, speedIdx, onSpeed, onPause,
         </div>
       )}
       <div className={`flex items-center gap-1.5 ${started ? "" : "ml-auto"}`}>
-        <button className="btn btn-ghost !px-1.5" onClick={onMute} aria-label={muted ? "Unmute ringer" : "Mute ringer"} title={muted ? "Ringer off" : "Ringer on"}>{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
+        {canListen && (
+          <button className={`btn ${listening ? "!border-accent !bg-accent-soft !text-accent" : ""}`} onClick={onListen} aria-pressed={listening}
+            title={listening ? "Calls are read aloud; the replay waits for each line" : "Read calls aloud"}>
+            <Headphones size={14} />{listening ? "Listening" : "Listen"}
+          </button>
+        )}
+        <button className="btn btn-ghost !px-1.5" onClick={onMute} aria-label={muted ? "Turn the ringer on" : "Turn the ringer off"} title={muted ? "Ringer off" : "Ringer on (for calls to roles you play)"}>{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
         {started && <button className="btn" onClick={onNewRun}><RotateCcw size={14} />New run</button>}
         {showHow && <button className={`btn ${how ? "!border-accent !bg-accent-soft !text-accent" : ""}`} onClick={onHow} aria-pressed={how}><Workflow size={14} />How it decided</button>}
       </div>

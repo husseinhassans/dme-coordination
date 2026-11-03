@@ -1,5 +1,6 @@
 import type { CaseSnapshot, ClientMsg, FaxDocument, ServerMsg } from "../types";
 import type { Transport } from "./transport";
+import { speech } from "./speech";
 
 /** Header of a replay file (written by scripts/slim_replay.py). */
 export interface ReplayMeta {
@@ -197,7 +198,14 @@ export class ReplayEngine implements Transport {
     const m = this.emitNext();
     // Hold at a hand-off to a person so the viewer actually sees it; Resume continues.
     if (m?.type === "escalation" && !m.escalation.decision && m.escalation.code !== "SAFETY_CONCERN") { this.pause(); return; }
-    if (m && !this.finished) this.schedule(baseDelay(m));
+    if (!m || this.finished) return;
+    if (m.type === "utterance" && speech.enabled) {
+      // Read aloud: wait for the voice to finish, then a short beat, whatever the speed.
+      const gen = this.idx;
+      speech.idle().then(() => { if (!this.closed && !this.paused && !this.finished && this.idx === gen && this.timer === null) this.timer = setTimeout(() => this.tick(), 350); });
+      return;
+    }
+    this.schedule(baseDelay(m));
   }
 
   private emitNext(): ServerMsg | null {

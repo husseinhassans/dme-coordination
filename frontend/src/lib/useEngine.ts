@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { CallOutcome, CaseSnapshot, ClientMsg, Escalation, Fact, PartyKind, SeatKey, SeatMode, ServerMsg, Utterance } from "../types";
 import { MockEngine } from "../mock/MockEngine";
 import { ReplayEngine, type ReplayMeta } from "./replay";
+import { speech } from "./speech";
 import { openWs, wantsMock, wantsReplay, wsUrl, type ConnStatus, type Transport } from "./transport";
 
 export type { ReplayMeta } from "./replay";
@@ -155,7 +156,13 @@ export function useEngine() {
     tRef.current = null;
     const gen = ++genRef.current;
     const current = () => gen === genRef.current;
-    const onMsg = (m: ServerMsg) => { if (current()) dispatch({ kind: "msg", msg: m }); };
+    speech.reset();
+    const onMsg = (m: ServerMsg) => {
+      if (!current()) return;
+      if (m.type === "snapshot" && m.case.events.length === 0) speech.reset(); // a (re)start
+      speech.observe(m);
+      dispatch({ kind: "msg", msg: m });
+    };
     const startMock = () => {
       if (!current()) return;
       tRef.current?.close();
