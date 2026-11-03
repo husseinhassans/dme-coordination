@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DME Coordination Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: an ops console. Sticky time scrubber on top; everything below (lanes, log, machines) is a view of one point in simulated time. */
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --ink: #15202b;
+  --muted: #5a6675;
+  --line: #d6dce3;
+  --line-strong: #9aa6b3;
+  --accent: #1d5bc4;
+  --accent-soft: #e3ecfb;
+  --llm: #0b7a80;
+  --llm-soft: #ddf2f2;
+  --human: #b02c6c;
+  --human-soft: #fae6ef;
+  --ok: #217a49;
+  --ok-soft: #e1f2e8;
+  --warn: #9a6200;
+  --warn-soft: #fbf0d9;
+  --bad: #b1352c;
+  --bad-soft: #fbe5e3;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #151c24; --ink: #e2e7ed; --muted: #94a1af; --line: #28323d; --line-strong: #56636f;
+    --accent: #78a6ff; --accent-soft: #1b2a45; --llm: #45c3c8; --llm-soft: #11302f; --human: #f173ad; --human-soft: #3a1a2a;
+    --ok: #57c48b; --ok-soft: #13301f; --warn: #e3a843; --warn-soft: #362810; --bad: #f2786d; --bad-soft: #3a1915;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #151c24; --ink: #e2e7ed; --muted: #94a1af; --line: #28323d; --line-strong: #56636f;
+  --accent: #78a6ff; --accent-soft: #1b2a45; --llm: #45c3c8; --llm-soft: #11302f; --human: #f173ad; --human-soft: #3a1a2a;
+  --ok: #57c48b; --ok-soft: #13301f; --warn: #e3a843; --warn-soft: #362810; --bad: #f2786d; --bad-soft: #3a1915;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: 30px; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+header.top { padding: 28px 0 18px; display: grid; gap: 10px; }
+.sub { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+section { padding: 22px 0; display: grid; gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+figure { margin: 0; display: grid; gap: 8px; }
+figcaption { color: var(--muted); font-size: 13.5px; max-width: 90ch; }
+.svgbox { overflow-x: auto; }
+.svgbox svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--ink); }
+
+/* scrubber */
+.scrub { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+.scrub .wrap { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding-top: 10px; padding-bottom: 10px; }
+.scrub .when { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+.scrub .when b { font-weight: 500; color: var(--accent); }
+.scrub input[type=range] { width: 100%; accent-color: var(--accent); }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+button { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:hover { border-color: var(--accent); color: var(--accent); }
+button:focus-visible, input:focus-visible, .ev:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.jumps { display: flex; flex-wrap: wrap; gap: 6px; grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); align-items: center; }
+.jumps button { font-size: 12px; padding: 3px 8px; }
+
+/* chips */
+.chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11.5px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--surface); white-space: nowrap; }
+.chip[data-tone=ok] { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.chip[data-tone=warn] { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.chip[data-tone=bad] { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+.chip[data-tone=human] { color: var(--human); background: var(--human-soft); border-color: transparent; }
+.chip[data-tone=live] { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.tag.call { color: var(--accent); }
+.tag.llm { color: var(--llm); }
+.tag.rules { color: var(--ink); }
+.tag.human { color: var(--human); }
+.tag.timer { color: var(--warn); }
+.tag.mock { color: var(--muted); border-style: dashed; }
+
+/* tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; }
+.tile .k { font-size: 12px; color: var(--muted); }
+.tile .v { font-family: var(--font-display); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .v.human { color: var(--human); }
+
+/* lanes */
+.lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.lane { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line-strong); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; align-content: start; }
+.lane[data-tone=ok] { border-left-color: var(--ok); }
+.lane[data-tone=warn] { border-left-color: var(--warn); }
+.lane[data-tone=bad] { border-left-color: var(--bad); }
+.lane[data-tone=human] { border-left-color: var(--human); }
+.lane[data-tone=live] { border-left-color: var(--accent); }
+.lane .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.lane .who { font-size: 13px; color: var(--muted); }
+.lane dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 13px; }
+.lane dt { color: var(--muted); }
+.lane dd { margin: 0; }
+
+/* log + detail */
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 12px; align-items: start; }
+.log { max-height: 560px; overflow-y: auto; padding: 6px; }
+.ev { display: grid; grid-template-columns: 92px 1fr; gap: 2px 10px; padding: 7px 9px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+.ev:hover { background: var(--bg); }
+.ev.future { opacity: 0.42; }
+.ev.cur { background: var(--accent-soft); border-color: var(--accent); opacity: 1; }
+.ev .t { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); line-height: 1.35; padding-top: 2px; }
+.ev .h { font-size: 13.5px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.ev .h .tag { flex: none; }
+.detail { display: grid; gap: 12px; position: sticky; top: 92px; }
+.detail .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+.panel { border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; border: 1px solid var(--line); }
+.panel .ph { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.panel.tx { background: var(--bg); }
+.panel.facts { border-color: var(--llm); }
+.panel.rule { border-color: var(--line-strong); border-width: 1px 1px 1px 4px; }
+.panel.esc { border-color: var(--human); background: var(--human-soft); }
+.line { font-size: 14px; }
+.line b { font-weight: 600; }
+.line.eng b { color: var(--accent); }
+pre { margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.prod { font-size: 12.5px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+
+/* tables */
+.tbl { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line-strong); padding: 7px 8px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--line); padding: 7px 8px; vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+tr.live td { background: var(--accent-soft); }
+.persona { color: var(--muted); font-style: italic; }
+.hide-persona .persona { display: none; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.head-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.ex { font-size: 11px; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 4px; padding: 0 5px; margin-left: 6px; }
+
+/* svg */
+.n rect { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.n text { fill: var(--ink); font: 500 12px var(--font-body); }
+.n.ok rect { stroke: var(--ok); }
+.n.warn rect { stroke: var(--warn); }
+.n.bad rect { stroke: var(--bad); }
+.n.esc rect { stroke: var(--human); stroke-dasharray: 4 3; fill: var(--human-soft); }
+.n.esc text { fill: var(--human); }
+.n.visited rect { fill: var(--bg); stroke-width: 1.8; }
+.n.on rect { fill: var(--accent); stroke: var(--accent); }
+.n.on text { fill: var(--surface); font-weight: 600; }
+.n .badge circle { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.n .badge text { fill: var(--surface); font: 600 10.5px var(--font-mono); }
+.e path { fill: none; stroke: var(--line-strong); stroke-width: 1.2; }
+.e text { fill: var(--muted); font: 400 10.5px var(--font-body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.e.done path { stroke: var(--accent); stroke-width: 2; }
+.e.done text { fill: var(--accent); }
+.mk-base { fill: var(--line-strong); }
+.mk-on { fill: var(--accent); }
+.ctx rect.box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.ctx rect.engine { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.ctx rect.lane { fill: var(--surface); stroke: var(--accent); stroke-width: 1; }
+.ctx rect.llm { fill: var(--llm-soft); stroke: var(--llm); }
+.ctx rect.rules { fill: var(--surface); stroke: var(--ink); }
+.ctx rect.human { fill: var(--human-soft); stroke: var(--human); stroke-dasharray: 5 3; }
+.ctx rect.mock { fill: var(--surface); stroke: var(--line-strong); stroke-dasharray: 5 3; }
+.ctx text { fill: var(--ink); font: 500 12.5px var(--font-body); }
+.ctx text.s { fill: var(--muted); font: 400 11px var(--font-body); }
+.ctx text.t { font: 600 14px var(--font-display); }
+.ctx text.hm { fill: var(--human); }
+.ctx text.lm { fill: var(--llm); }
+.ctx line, .ctx path { stroke: var(--line-strong); stroke-width: 1.3; fill: none; }
+.ctx .dash { stroke-dasharray: 5 4; }
+.ctx .hl { stroke: var(--human); }
+.ctx polygon { fill: var(--line-strong); }
+.ctx polygon.hp { fill: var(--human); }
+.ctx .joinshape { fill: var(--accent); }
+.ctx text.on { fill: var(--surface); font-weight: 600; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 920px) {
+  .split, .grid2, .lanes { grid-template-columns: 1fr; }
+  .detail { position: static; }
+  .scrub .wrap { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+/* v2 additions */
+.ft { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ft td { border-bottom: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
+.ft td.k { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.ft td.v { font-family: var(--font-mono); font-size: 11.5px; }
+.ft td.q { color: var(--ink); }
+.ft .ok { color: var(--ok); font-weight: 600; }
+.ft .miss { color: var(--warn); font-weight: 600; }
+.doc { background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 6px; padding: 8px 10px; }
+.panel.packet { border: 1.5px solid var(--human); background: var(--human-soft); }
+.panel.packet h4, .panel.humanact h4 { margin: 2px 0 0; font: 600 13px var(--font-body); }
+.panel.packet ul, .panel.humanact ul { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
+.q { font-size: 15px; font-weight: 600; color: var(--human); }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt { font-size: 12.5px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--human); color: var(--human); background: var(--surface); }
+.opt.picked { background: var(--human); color: var(--surface); }
+.panel.humanact { border: 1.5px dashed var(--human); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.tag.esc { color: var(--human); border-style: solid; background: var(--human-soft); }
+.srcs a { color: var(--accent); }
+.cost td.num { font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header class="top">
+  <h1>DME coordination engine</h1>
+  <p class="sub">Design for the take-home, version 2 after a full audit. One engine runs a Medicare equipment case from "intake done" to "chair delivered and billed right." It calls suppliers, the doctor's office and the patient on its own, and hands the case to a person only for ten named reasons. Everything below follows one simulated run of Eleanor Martinez's case. It hits all five failure modes in the brief. Four are recovered automatically, and one is handed to a person on purpose. Drag the timeline to replay it.</p>
+  <div class="legend" aria-label="Legend">
+    <span><i class="sw" style="background:var(--accent)"></i>Current state or a call</span>
+    <span><i class="sw" style="background:var(--llm)"></i>LLM does it</span>
+    <span><i class="sw" style="background:var(--ink)"></i>Rules decide it</span>
+    <span><i class="sw" style="background:var(--human)"></i>Human needed</span>
+    <span><i class="sw" style="border:1.5px dashed var(--line-strong)"></i>Mocked in the prototype</span>
+  </div>
+</header>
+</div>
+
+<div class="scrub" role="region" aria-label="Simulation time">
+  <div class="wrap">
+    <div class="when" id="when">Day 0</div>
+    <input type="range" id="range" min="0" max="0" value="0" aria-label="Simulation step">
+    <div class="btns">
+      <button id="prev" type="button">Back</button>
+      <button id="next" type="button">Next</button>
+      <button id="play" type="button">Play</button>
+    </div>
+    <div class="jumps" id="jumps"><span>Jump to:</span></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<section id="context">
+  <h2>Where the engine sits</h2>
+  <figure class="card">
+    <div class="svgbox">
+    <svg class="ctx" viewBox="0 0 1000 430" role="img" aria-label="Intake hands a case to the coordination engine, which runs supplier, order and patient threads in parallel over mocked voice calls, joins them, hands off to the supplier for delivery and billing, and escalates to a human queue only on enumerated reasons.">
+      <defs>
+        <marker id="ctx-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-base"/></marker>
+        <marker id="ctx-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--human)"/></marker>
+      </defs>
+      <rect class="mock" x="250" y="14" width="150" height="54" rx="8"/>
+      <text x="325" y="37" text-anchor="middle">12 enrolled suppliers</text>
+      <text class="s" x="325" y="55" text-anchor="middle">name, phone, address only</text>
+      <rect class="mock" x="420" y="14" width="170" height="54" rx="8"/>
+      <text x="505" y="37" text-anchor="middle">Sunrise Family Medicine</text>
+      <text class="s" x="505" y="55" text-anchor="middle">Dr. Chen's front desk, fax</text>
+      <rect class="mock" x="610" y="14" width="150" height="54" rx="8"/>
+      <text x="685" y="37" text-anchor="middle">Eleanor, 72</text>
+      <text class="s" x="685" y="55" text-anchor="middle">patient, by phone</text>
+      <line class="dash" x1="325" y1="68" x2="325" y2="102" marker-start="url(#ctx-a)" marker-end="url(#ctx-a)"/>
+      <line class="dash" x1="505" y1="68" x2="505" y2="102" marker-start="url(#ctx-a)" marker-end="url(#ctx-a)"/>
+      <line class="dash" x1="685" y1="68" x2="685" y2="102" marker-start="url(#ctx-a)" marker-end="url(#ctx-a)"/>
+      <text class="s" x="772" y="88">voice and fax · mocked as</text>
+      <text class="s" x="772" y="102">LLM-roleplayed text</text>
+      <rect class="box" x="16" y="170" width="160" height="62" rx="8"/>
+      <text x="96" y="196" text-anchor="middle">Intake (done)</text>
+      <text class="s" x="96" y="214" text-anchor="middle">consent + authorization</text>
+      <line x1="176" y1="201" x2="226" y2="201" marker-end="url(#ctx-a)"/>
+      <rect class="engine" x="228" y="104" width="560" height="244" rx="12"/>
+      <text class="t" x="244" y="128" style="fill:var(--accent)">Coordination engine (this prototype)</text>
+      <rect class="lane" x="244" y="146" width="370" height="30" rx="6"/>
+      <text x="256" y="166">Supplier thread · find, qualify, commit, confirm</text>
+      <rect class="lane" x="244" y="190" width="370" height="30" rx="6"/>
+      <text x="256" y="210">Order thread · request, chase, validate, send</text>
+      <rect class="lane" x="244" y="234" width="370" height="30" rx="6"/>
+      <text x="256" y="254">Patient thread · inform, consent, confirm, verify</text>
+      <line x1="614" y1="161" x2="664" y2="198"/>
+      <line x1="614" y1="205" x2="660" y2="205"/>
+      <line x1="614" y1="249" x2="664" y2="212"/>
+      <polygon class="joinshape" points="680,180 705,205 680,230 655,205"/>
+      <text class="on" x="680" y="209" text-anchor="middle" style="font-size:11px">Join</text>
+      <text class="s" x="680" y="248" text-anchor="middle">all three ready?</text>
+      <rect class="llm" x="244" y="282" width="262" height="52" rx="6"/>
+      <text class="lm" x="256" y="302">LLM layer</text>
+      <text class="s" x="256" y="320">scripts · facts with quotes · fax → fields</text>
+      <rect class="rules" x="516" y="282" width="258" height="52" rx="6"/>
+      <text x="528" y="302">Rules layer</text>
+      <text class="s" x="528" y="320">transitions · validator · cost · timers</text>
+      <line x1="705" y1="205" x2="826" y2="205" marker-end="url(#ctx-a)"/>
+      <text class="s" x="740" y="196">handoff</text>
+      <rect class="box" x="828" y="172" width="160" height="62" rx="8"/>
+      <text x="908" y="198" text-anchor="middle">Supplier delivers</text>
+      <text class="s" x="908" y="216" text-anchor="middle">and bills K0001-RR</text>
+      <line x1="908" y1="234" x2="908" y2="290" marker-end="url(#ctx-a)"/>
+      <text class="s" x="914" y="266">claim</text>
+      <rect class="mock" x="828" y="292" width="160" height="50" rx="8"/>
+      <text x="908" y="315" text-anchor="middle">Medicare (DME MAC)</text>
+      <text class="s" x="908" y="332" text-anchor="middle">out of scope</text>
+      <line class="hl" x1="470" y1="348" x2="470" y2="372" marker-end="url(#ctx-h)"/>
+      <line class="hl dash" x1="540" y1="372" x2="540" y2="348" marker-end="url(#ctx-h)"/>
+      <text class="s hm" x="462" y="364" text-anchor="end">escalation packet</text>
+      <text class="s hm" x="548" y="364">typed decision, then resume</text>
+      <rect class="human" x="380" y="374" width="250" height="46" rx="8"/>
+      <text class="hm" x="505" y="395" text-anchor="middle">Care advocate queue (async)</text>
+      <text class="s" x="505" y="412" text-anchor="middle">only for the 10 escalation codes below</text>
+    </svg>
+    </div>
+    <figcaption>The engine owns the case between intake and delivery. The outside parties are reached only by voice or fax, so in the prototype each one is an LLM playing a role with hidden facts. The LLM layer turns language into facts, and every fact must carry a quote. The rules layer makes every decision.</figcaption>
+  </figure>
+</section>
+
+<section id="queue">
+  <div class="head-row">
+    <h2>Case queue</h2>
+    <span class="sub" style="font-size:13px">Eleanor's row is live. The other rows are illustrative examples.</span>
+  </div>
+  <div class="card tbl">
+    <table>
+      <thead><tr><th>Patient</th><th>Equipment</th><th>Case</th><th>Supplier</th><th>Order</th><th>Patient</th><th>Needs a human?</th></tr></thead>
+      <tbody id="queueBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="case">
+  <div class="head-row">
+    <h2>Eleanor Martinez, 72 · standard manual wheelchair (K0001)</h2>
+    <span class="sub" style="font-size:13px">Original Medicare Part B, no Medigap · PCP Dr. Sarah Chen · visit Fri Oct 30</span>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <div class="lanes" id="lanes"></div>
+  <div class="split">
+    <div class="card log" id="log" aria-label="Event log"></div>
+    <div class="card detail" id="detail" aria-live="polite"></div>
+  </div>
+  <div class="card tbl">
+    <div class="head-row" style="margin-bottom:8px">
+      <h3>Supplier board · the directory as the engine sees it</h3>
+      <label class="toggle"><input type="checkbox" id="showPersona"> Show hidden mock personas</label>
+    </div>
+    <table id="supTable" class="hide-persona">
+      <thead><tr><th>Supplier</th><th>Phone</th><th>Address</th><th>Est. distance</th><th>State</th><th>Why</th></tr></thead>
+      <tbody id="supBody"></tbody>
+    </table>
+    <p class="sub" style="font-size:12.5px;margin-top:8px">Intake had no home address, so the first patient call confirms it. Distances are straight-line estimates from a mocked address near 60614. The directory never gains stock, network or reliability columns. Those facts only come from calls.</p>
+  </div>
+</section>
+
+<section id="machines">
+  <h2>State machines</h2>
+  <p class="sub">Filled blue is where each thread is right now. Blue arrows are transitions this run has taken. Dashed pink boxes are the only exits to a human. On the supplier machine, the number badge counts candidates in that state.</p>
+  <figure class="card"><h3>Case</h3><div class="svgbox"><svg id="m-case" role="img" aria-label="Case states from open through handoff, delivery and closed, with blocked-on-human, paused and abandoned side states."></svg></div>
+    <figcaption>The case advances only when the join fires: a validated order the supplier has accepted, a supplier with a date, and a patient who agreed to that supplier and window. A ghosted supplier drops the case back to open with no new paperwork. The case shows blocked only while the join is waiting on a thread that is with a person.</figcaption></figure>
+  <div class="grid2">
+    <figure class="card"><h3>Supplier thread (per candidate)</h3><div class="svgbox"><svg id="m-supplier" role="img" aria-label="Per-supplier states from not contacted through calling, qualified, committed, confirmed and delivered, with no-answer, disqualified, ghosted and eligibility branches."></svg></div>
+      <figcaption>Three candidates are in flight at once, nearest first. After one commits, the thread keeps one qualified backup warm. A disqualified or ghosted candidate moves the thread to the next one. Her identity goes only to a committed supplier.</figcaption></figure>
+    <figure class="card"><h3>Order thread</h3><div class="svgbox"><svg id="m-order" role="img" aria-label="Order states from verbal in chart through requested, acknowledged, received, validated, sent and docs OK, with nudge and correction loops."></svg></div>
+      <figcaption>The request goes out with the public coverage checklist, which prevents most documentation gaps. The validator is code. The LLM pre-screens the note for criteria with no supporting sentence, and a gap only triggers a neutral request to the office.</figcaption></figure>
+  </div>
+  <figure class="card"><h3>Patient thread</h3><div class="svgbox" style="max-width:760px"><svg id="m-patient" role="img" aria-label="Patient states from not contacted to informed, window confirmed and delivery verified, with unreachable, cost concern and declines escalations."></svg></div>
+    <figcaption>Calls are milestone-driven: the intro, supplier consent and window, any slip, and a check after delivery. Any call can also raise a non-blocking safety escalation, such as a fall, which is not drawn here.</figcaption></figure>
+</section>
+
+<section id="rules">
+  <h2>The only reasons a human gets pulled in</h2>
+  <div class="card tbl">
+    <table>
+      <thead><tr><th>Code</th><th>Blocks</th><th>Raised when</th><th>Why a person</th><th>Allowed answers</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chip" data-tone="human">SUPPLIERS_EXHAUSTED</span></td><td>supplier</td><td>Every candidate is disqualified, unreachable or ghosted</td><td>Widen the radius, go outside the directory, or pay another way</td><td>widen · add supplier · pause</td></tr>
+        <tr><td><span class="chip" data-tone="human">ELIGIBILITY_CONFLICT</span></td><td>supplier</td><td>The supplier's check finds a prior wheelchair rental or a different plan</td><td>The 60-day break-in-need facts can't be verified by phone</td><td>proceed · transfer to prior supplier · close</td></tr>
+        <tr><td><span class="chip" data-tone="human">ORDER_UNSIGNED</span></td><td>order</td><td>Three nudges, still unsigned</td><td>A relationship call to the practice</td><td>retry via contact · pause</td></tr>
+        <tr><td><span class="chip" data-tone="human">ORDER_NEEDS_CLINICAL_FIX</span></td><td>order</td><td>The code and the note disagree on which chair she needs</td><td>Choosing equipment is the doctor's call</td><td>doctor confirms K0001 · new code</td></tr>
+        <tr><td><span class="chip" data-tone="human">DOCS_INSUFFICIENT</span></td><td>order</td><td>The supplier still rejects the note after the addendum loop</td><td>The clinician must document or re-examine. AI never drafts it</td><td>re-visit booked · close</td></tr>
+        <tr><td><span class="chip" data-tone="human">PATIENT_UNREACHABLE</span></td><td>patient</td><td>Four tries over three business days</td><td>Welfare check, emergency contact</td><td>reached · pause</td></tr>
+        <tr><td><span class="chip" data-tone="human">PATIENT_COST_CONCERN</span></td><td>patient</td><td>A quoted statement shows she can't pay, is confused, or is stopping over cost</td><td>A money conversation, QMB screening, keeping her engaged</td><td>proceed · proceed + QMB · pause · close</td></tr>
+        <tr><td><span class="chip" data-tone="human">PATIENT_DECLINES</span></td><td>patient</td><td>She declines for reasons other than cost</td><td>Coverage criterion E. A person should hear why</td><td>proceed · close</td></tr>
+        <tr><td><span class="chip" data-tone="human">AMBIGUOUS_CALL_OUTCOME</span></td><td>that thread</td><td>A required fact has no quote after one clarifying call, or delivery proof and her account disagree</td><td>A person reviews the recording</td><td>set the fact</td></tr>
+        <tr><td><span class="chip" data-tone="human">SAFETY_CONCERN</span></td><td>nothing</td><td>She mentions a fall, an injury or acute distress</td><td>Her welfare is never handled by a machine</td><td>acknowledged</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="font-size:13px;margin-top:10px">Every escalation arrives as a packet. It holds what was tried, the transcripts, all three threads' states, the computed numbers, one question, and the allowed answers. The person picks an answer, so the engine knows exactly where to resume.</p>
+  </div>
+  <div class="grid2">
+    <div class="card tbl">
+      <h3 style="margin-bottom:8px">Where the LLM sits, and where it doesn't</h3>
+      <table>
+        <thead><tr><th>Step</th><th>Who</th></tr></thead>
+        <tbody>
+          <tr><td>Write the call script for this party and goal</td><td><span class="tag llm">LLM</span></td></tr>
+          <tr><td>Turn a transcript into facts, each with a verbatim quote</td><td><span class="tag llm">LLM</span></td></tr>
+          <tr><td>Read a faxed order into fields, with quotes</td><td><span class="tag llm">LLM</span></td></tr>
+          <tr><td>Flag coverage criteria the note never mentions</td><td><span class="tag llm">LLM</span></td></tr>
+          <tr><td>Patient-facing wording, with numbers the rules computed</td><td><span class="tag llm">LLM</span></td></tr>
+          <tr><td>Accept a fact only if its quote is really there</td><td><span class="tag rules">Rules</span></td></tr>
+          <tr><td>Qualify or disqualify a supplier</td><td><span class="tag rules">Rules</span></td></tr>
+          <tr><td>Validate the order</td><td><span class="tag rules">Rules</span></td></tr>
+          <tr><td>Compute what she'll owe</td><td><span class="tag rules">Rules</span></td></tr>
+          <tr><td>Timers, retries, escalation triggers</td><td><span class="tag rules">Rules</span></td></tr>
+          <tr><td>Medical-necessity text, coverage judgment, income screening</td><td><span class="tag human">Never AI</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card tbl">
+      <h3 style="margin-bottom:8px">What Eleanor will owe, computed by rules</h3>
+      <table class="cost">
+        <tbody>
+          <tr><td>Medicare allowance, months 1–3 (Chicago, Q4 2026)</td><td class="num">$34.27/mo</td></tr>
+          <tr><td>Her 20%, months 1–3</td><td class="num">$6.85/mo</td></tr>
+          <tr><td>Months 4–13 at 75% of the fee</td><td class="num">$25.70/mo</td></tr>
+          <tr><td>Her 20%, months 4–13</td><td class="num">$5.14/mo</td></tr>
+          <tr><td>Her total over 13 months</td><td class="num">≈ $72</td></tr>
+          <tr><td>Plus any unmet 2026 deductible</td><td class="num">up to $283</td></tr>
+          <tr><td>2027 rental months</td><td class="num">new deductible applies first</td></tr>
+          <tr><td>If she qualifies for QMB</td><td class="num">$0</td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin:14px 0 8px">Timers</h3>
+      <table>
+        <tbody>
+          <tr><td>Supplier no-answer retry</td><td class="num">+4h, +1d, +2d · max 3</td></tr>
+          <tr><td>Ghost threshold</td><td class="num">promised date +1 business day</td></tr>
+          <tr><td>Office acknowledgment</td><td class="num">1 business day</td></tr>
+          <tr><td>Signature</td><td class="num">3 business days · 3 nudges</td></tr>
+          <tr><td>Patient retries</td><td class="num">4 over 3 business days</td></tr>
+          <tr><td>Escalation unanswered</td><td class="num">1 business day → supervisor</td></tr>
+          <tr><td>Business days</td><td class="num">Mon–Fri, no federal holidays</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card tbl">
+    <h3 style="margin-bottom:8px">Design decisions a reviewer could challenge</h3>
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td class="num">D1</td><td>Assume intake captured a HIPAA authorization naming the company and consent to automated calls. The engine checks both before starting.</td><td>The office won't talk to us without it. AI voice calls need consent.</td></tr>
+        <tr><td class="num">D2</td><td>Every call opens by saying it's an automated assistant.</td><td>Disclosure and trust with an older patient.</td></tr>
+        <tr><td class="num">D3</td><td>Scouting calls never name her. Her name, MBI and order go only to the committed supplier, and only after she consents. Voicemails carry no health details.</td><td>HIPAA minimum necessary.</td></tr>
+        <tr><td class="num">D4</td><td>The engine prefills the order for Dr. Chen to sign and sends the public coverage checklist with it.</td><td>Allowed for non-power items. Prevents the documentation gap behind 79.7% of improper payments.</td></tr>
+        <tr><td class="num">D5</td><td>The signed order comes to the engine, which validates it and relays it to the supplier.</td><td>Catches errors before the supplier does. The order names no supplier, so it moves to a replacement unchanged.</td></tr>
+        <tr><td class="num">D6</td><td>Delivery waits for a validated order, even though K0001 doesn't require it.</td><td>A wrong code on a delivered chair makes it unbillable.</td></tr>
+        <tr><td class="num">D7</td><td>The validator checks the six order elements, K0001, quantity 1, and that the description matches the code. "Order dated after the visit" is our own sanity check.</td><td>Labeled so nobody mistakes our check for a Medicare rule.</td></tr>
+        <tr><td class="num">D8</td><td>The LLM flags criteria the note never mentions, with quotes. It doesn't judge coverage and never writes clinical text.</td><td>A false flag costs one polite request.</td></tr>
+        <tr><td class="num">D9</td><td>Supplier cutoffs (ETA ≤ 10 days, restock ≤ 14) are product policy in config.</td><td>Not Medicare rules.</td></tr>
+        <tr><td class="num">D10</td><td>Eleanor approves the supplier before anything is scheduled.</td><td>Beneficiaries choose their supplier.</td></tr>
+        <tr><td class="num">D11</td><td>"Delivered" needs the supplier's proof of delivery and her confirmation.</td><td>Two independent signals. A mismatch goes to a person.</td></tr>
+        <tr><td class="num">D12</td><td>Every LLM fact needs a verbatim quote that the rules find by string match. No quote means unknown. No confidence scores.</td><td>Checkable. Self-reported LLM confidence isn't calibrated.</td></tr>
+        <tr><td class="num">D13</td><td>Patient calls 9:00–18:00, at her best time, one routine call a day, plus one urgent call when something slips.</td><td>Call fatigue drives the disengagement failure mode.</td></tr>
+        <tr><td class="num">D14</td><td>One calendar for every timer: Mon–Fri without federal holidays.</td><td>The run crosses Veterans Day and handles it.</td></tr>
+        <tr><td class="num">D15</td><td>The intro call asks about a wheelchair after her March knee surgery.</td><td>A prior rental silently kills the claim. Asking costs one question.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card tbl srcs">
+    <h3 style="margin-bottom:8px">Verified facts the design rests on</h3>
+    <table>
+      <thead><tr><th>#</th><th>Fact</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td class="num">F1</td><td>K0001 for home use needs coverage criteria A–E plus F or G. "Difficulty walking" doesn't meet them. A chair only for use outside the home isn't covered.</td><td><a href="https://www.cgsmedicare.com/jc/dpl/dpl_manual_wheelchairs.pdf">DME MAC letter, LCD L33788</a></td></tr>
+        <tr><td class="num">F2</td><td>Insufficient documentation causes 79.7% of improper payments on manual wheelchairs.</td><td><a href="https://www.cms.gov/training-education/medicare-learning-networkr-mln/compliance/medicare-provider-compliance-tips/manual-wheelchairs">CMS MLN</a></td></tr>
+        <tr><td class="num">F3</td><td>An order needs six elements: name or MBI, description, quantity, practitioner name or NPI, date, signature. It names no supplier.</td><td><a href="https://cms.gov/data-research/monitoring-programs/medicare-fee-service-compliance-programs/medical-review-and-education/dmepos-order-requirements">CMS order requirements</a></td></tr>
+        <tr><td class="num">F4</td><td>Someone else may fill in the order for non-power items. The practitioner signs.</td><td><a href="https://www.cms.gov/medicare-coverage-database/details/article-details.aspx?articleId=55426">A55426</a></td></tr>
+        <tr><td class="num">F5</td><td>K0001 isn't on the order-before-delivery list. K0002–K0007 are, effective Oct 28, 2026.</td><td><a href="https://www.cms.gov/files/document/required-face-face-encounter-written-order-prior-delivery-list.pdf">CMS list</a></td></tr>
+        <tr><td class="num">F6</td><td>K0001 is a capped rental for up to 13 months. Months 4–13 pay 75% of the fee.</td><td><a href="https://www.cms.gov/medicare/payment/fee-schedules/dmepos/dmepos-fee-schedule/dme26-d">CMS fee schedule notes</a></td></tr>
+        <tr><td class="num">F7</td><td>60614 is in the former Chicago bidding area. The K0001 rental allowance there is $34.27 a month.</td><td><a href="https://www.cms.gov/medicare/payment/fee-schedules/dmepos/dmepos-fee-schedule/dme26-d">CMS DME26-D files</a></td></tr>
+        <tr><td class="num">F8</td><td>Competitive bidding is paused until 2028, so any enrolled supplier can provide the chair.</td><td><a href="https://dmeposcompetitivebid.cms.gov/node/765">CMS Round 2028</a></td></tr>
+        <tr><td class="num">F9</td><td>A supplier that doesn't accept assignment can charge her more. No limiting charge applies to DME.</td><td><a href="https://content.naic.org:443/sites/default/files/inline-files/CMS%20Response%20to%20DME%20Letter.pdf">CMS letter</a></td></tr>
+        <tr><td class="num">F10</td><td>The 2026 Part B deductible is $283. It resets every January.</td><td><a href="https://www.healthcarefinancenews.com/news/rising-cost-medicare-premium-and-deductibles-2026">2026 amounts</a></td></tr>
+        <tr><td class="num">F11</td><td>A new rental period needs a 60-day break in need. Prior rentals show up as "same or similar."</td><td><a href="https://med.noridianmedicare.com/web/jddme/claims-appeals/billing-situations/new-capped-rental-period">Noridian</a></td></tr>
+        <tr><td class="num">F12</td><td>QMB pays all Medicare cost-sharing. Illinois 2026 limits are about $1,330 a month in income and $9,950 in assets. Suppliers can't bill QMB enrollees.</td><td><a href="https://ilaging.illinois.gov/content/dam/soi/en/web/aging/ship/documents/medicare-savings-program-chart.pdf">IL Dept. on Aging</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div>
+
+<script>
+"use strict";
+const SUP = [
+  { id: "lp", name: "Lincoln Park DME Services", phone: "(312) 555-0468", addr: "2401 N Lincoln Ave, Chicago 60614", mi: 0.3, persona: "Says yes to everything, confirms a date, then never shows." },
+  { id: "hh", name: "Halsted Home Health Supply", phone: "(773) 555-0356", addr: "2870 N Halsted St, Chicago 60657", mi: 0.9, persona: "Not taking new Medicare patients until January." },
+  { id: "ls", name: "Lakeshore Home Medical Equipment", phone: "(312) 555-0142", addr: "1820 N Clark St, Chicago 60614", mi: 1.3, persona: "Rarely answers before noon. Out of K0001 for three weeks." },
+  { id: "wc", name: "Windy City Mobility & DME", phone: "(312) 555-0177", addr: "435 W Erie St, Chicago 60654", mi: 2.1, persona: "Enrolled, but won't accept assignment on rentals." },
+  { id: "ps", name: "Prairie State Medical Supply", phone: "(773) 555-0211", addr: "3344 N Western Ave, Chicago 60618", mi: 2.1, persona: "Reliable. Answers, has stock, delivers on time. Closed Veterans Day." },
+  { id: "bm", name: "Belmont Medical Equipment", phone: "(773) 555-0447", addr: "3400 W Belmont Ave, Chicago 60618", mi: 3.2, persona: "Would qualify. Never needed." },
+  { id: "rs", name: "Roosevelt Medical Supply Co", phone: "(312) 555-0319", addr: "1147 W Roosevelt Rd, Chicago 60608", mi: 3.8, persona: "Not reached in this run." },
+  { id: "nc", name: "Northside CarePlus Equipment", phone: "(773) 555-0288", addr: "5215 N Clark St, Chicago 60640", mi: 3.9, persona: "Not reached in this run." },
+  { id: "cl", name: "ChicagoLand Durable Medical", phone: "(312) 555-0301", addr: "900 S Wabash Ave, Chicago 60605", mi: 3.9, persona: "Not reached in this run." },
+  { id: "sl", name: "South Loop Medical Supply", phone: "(312) 555-0490", addr: "1530 S State St, Chicago 60605", mi: 4.5, persona: "Not reached in this run." },
+  { id: "mm", name: "Midwest Mobility Solutions", phone: "(847) 555-0402", addr: "6601 W Touhy Ave, Niles 60714", mi: 9.4, persona: "Doesn't deliver into the city." },
+  { id: "eh", name: "Evanston Home Medical", phone: "(847) 555-0533", addr: "1700 Central St, Evanston 60201", mi: 10.0, persona: "Doesn't deliver south of Howard St." }
+];
+const SUPNAME = Object.fromEntries(SUP.map(s => [s.id, s.name]));
+
+const DOC1 = "STANDARD WRITTEN ORDER\nPatient: Eleanor Martinez   MBI: 1EG4-TE5-MK73\nItem: Standard wheelchair   HCPCS: K0003   Qty: 1\nOrdering provider: Sarah Chen, MD   NPI: 1234567893\nDate: 11/04/2026\nSignature: /s/ Sarah Chen, MD (electronically signed)\n\nVISIT NOTE 10/30/2026 (excerpt)\nGait: unable to walk to bathroom without stopping to rest; near-fall at home 10/2.\nPlan: standard wheelchair for daily use in apartment. Patient agrees. Daughter assists with transfers.";
+const DOC2 = "STANDARD WRITTEN ORDER (corrected)\nPatient: Eleanor Martinez   MBI: 1EG4-TE5-MK73\nItem: Standard wheelchair   HCPCS: K0001   Qty: 1\nOrdering provider: Sarah Chen, MD   NPI: 1234567893\nDate: 11/06/2026\nSignature: /s/ Sarah Chen, MD (electronically signed)\n\nADDENDUM 11/06/2026 to visit of 10/30/2026\nAt the 10/30 visit, patient could not safely reach the bathroom using her walker because of fatigue and poor balance. She lives in an elevator building and reports the doorways in her apartment are wide enough for a wheelchair.\n/s/ Sarah Chen, MD";
+
+/* kind: call | fax | timer | rule | system | escalation | human. facts: key -> [value, quote|null] */
+const EVENTS = [
+  { j: "Start", d: "Mon Nov 2", t: "09:00", th: "case", kind: "system", title: "Case opened from intake",
+    rule: "Preconditions checked: HIPAA authorization and consent to automated calls are on file (assumption D1). Case OPEN. Three threads start in parallel. Intake has no home address and no Medicare number, so the first patient call collects them.",
+    set: { case: "OPEN", order: "VERBAL_IN_CHART", patient: "NOT_CONTACTED", next: { supplier: "after her address is confirmed", order: "now", patient: "now" } } },
+  { d: "Mon Nov 2", t: "09:02", th: "patient", kind: "call", who: "Eleanor Martinez", title: "Intro call to Eleanor",
+    tx: [["Engine", "Hi, is this Eleanor Martinez? I'm an automated assistant calling for your care team about the wheelchair Dr. Chen noted at your visit on Friday. Is now a good time?"],
+         ["Eleanor", "Yes, go ahead."],
+         ["Engine", "I'll get the signed order from Dr. Chen's office and find a supplier near you. Can you confirm your home address, and read me the Medicare number on your red, white and blue card?"],
+         ["Eleanor", "2236 North Seminary, second floor, there's an elevator. The number is 1EG4-TE5-MK73."],
+         ["Engine", "Thank you. On cost: Medicare rents the chair by the month, and it's yours after 13 months. Your share is about $6.85 a month for three months, then about $5.14, roughly $72 in all. You'd also owe any part of this year's $283 deductible you haven't met, and the deductible starts over in January. Have you met it this year?"],
+         ["Eleanor", "I had my knee done in March, so probably."],
+         ["Engine", "After the knee surgery, did you have a wheelchair, or only a walker?"],
+         ["Eleanor", "Just the walker. I still use it."],
+         ["Engine", "When's the best time to reach you?"],
+         ["Eleanor", "Mornings."]],
+    facts: { address: ["2236 N Seminary Ave, 2nd fl, 60614", "2236 North Seminary, second floor"], home_access: ["elevator building", "there's an elevator"], mbi: ["1EG4-TE5-MK73", "1EG4-TE5-MK73"], deductible_met_2026: ["unknown (likely)", "I had my knee done in March, so probably."], prior_wheelchair: [false, "Just the walker."], best_time: ["mornings", "Mornings."] },
+    rule: "Patient INFORMED. \"Probably\" isn't a confirmation, so the deductible stays unknown and the cost stays a range. No prior wheelchair is reported, though the supplier's eligibility check is the real test (D15). The address unblocks supplier ranking. The MBI is CMS's published sample number, used here as mock data.",
+    set: { patient: ["INFORMED"], next: { patient: "when a supplier and date are ready" } } },
+  { d: "Mon Nov 2", t: "09:04", th: "supplier", kind: "rule", title: "Rank 12 suppliers by distance",
+    rule: "The directory has only name, phone and address, so suppliers are ranked by straight-line distance from 60614. Niles and Evanston rank last. The three nearest are called in parallel. Scouting calls never use her name (D3).",
+    set: { next: { supplier: "calling the top 3" } } },
+  { d: "Mon Nov 2", t: "09:05", th: "order", kind: "fax", who: "Sunrise Family Medicine", title: "Request the order, checklist attached",
+    rule: "Faxed a prefilled order for Dr. Chen to review and sign: K0001, quantity 1, Eleanor's name and MBI, Dr. Chen's name (D4). Attached the public coverage checklist for manual wheelchairs and asked for the Oct 30 visit note. No supplier is committed yet, so the order comes back to the engine (D5). Left a voicemail for the front desk with a callback number only. Acknowledgment is due in 1 business day.",
+    set: { order: ["REQUESTED"], next: { order: "acknowledgment due Tue 09:00" } } },
+  { d: "Mon Nov 2", t: "09:10", th: "supplier", kind: "call", who: SUPNAME.lp, title: "Lincoln Park qualifies and takes the referral",
+    tx: [["Engine", "Hi, this is an automated assistant calling for a patient care team. We have a Medicare Part B patient near Lincoln and Fullerton, ZIP 60614, who needs a standard manual wheelchair, K0001. Are you taking new Medicare patients, and do you accept assignment for all the rental months?"],
+         ["Lincoln Park", "Yep, and yep."],
+         ["Engine", "Do you have K0001 in stock, do you deliver to her area, and how fast?"],
+         ["Lincoln Park", "We've got standard chairs on the floor and we're right down the street. Once the paperwork's in, we can usually deliver in three days."],
+         ["Engine", "Will you take the referral? We'll send her details and the signed order this week."],
+         ["Lincoln Park", "Sure, send it over. Ask for Dev."]],
+    facts: { accepting_new_medicare: [true, "Yep, and yep."], accepts_assignment_all_months: [true, "Yep, and yep."], k0001_in_stock: [true, "We've got standard chairs on the floor"], serves_address: [true, "we're right down the street"], delivery_eta_days: [3, "we can usually deliver in three days"], accepts_referral: [true, "Sure, send it over."], contact: ["Dev", "Ask for Dev."] },
+    rule: "Every hard check has a quote and passes, so QUALIFIED. It took the referral, so COMMITTED. Reconfirm if the order isn't ready by Mon Nov 9.",
+    set: { sup: { lp: ["CALLING", "QUALIFIED", "COMMITTED"] }, next: { supplier: "reconfirm by Mon Nov 9" } } },
+  { d: "Mon Nov 2", t: "09:11", th: "supplier", kind: "call", who: SUPNAME.hh, title: "Halsted isn't taking new Medicare patients",
+    tx: [["Engine", "Hi, this is an automated assistant calling for a patient care team. Are you taking new Medicare Part B patients for a standard wheelchair, K0001, in 60614?"],
+         ["Halsted", "Not right now, hon. We're full up on new Medicare patients until January."]],
+    facts: { accepting_new_medicare: [false, "We're full up on new Medicare patients until January."] },
+    rule: "Hard fail on accepting_new_medicare, so DISQUALIFIED (NOT_ACCEPTING). One quoted hard fail is enough. Nothing else is asked.",
+    set: { sup: { hh: ["CALLING", "DISQUALIFIED"] } } },
+  { d: "Mon Nov 2", t: "09:12", th: "supplier", kind: "call", who: SUPNAME.ls, title: "Lakeshore doesn't answer",
+    rule: "NO_ANSWER. Retry in 4 hours.",
+    set: { sup: { ls: ["CALLING", "NO_ANSWER"] } } },
+  { d: "Mon Nov 2", t: "09:20", th: "supplier", kind: "rule", title: "One committed, so keep a backup warm",
+    rule: "A commitment isn't a delivery. Policy is to keep one more qualified supplier without asking it to commit. Calling the next two by distance.",
+    set: {} },
+  { d: "Mon Nov 2", t: "09:22", th: "supplier", kind: "call", who: SUPNAME.wc, title: "Windy City won't accept assignment",
+    tx: [["Engine", "Hi, this is an automated assistant for a patient care team. For a K0001 rental for a Part B patient, do you accept assignment for all the rental months?"],
+         ["Windy City", "We're enrolled, but we don't take assignment on rentals. She'd pay us and Medicare reimburses her."]],
+    facts: { accepts_assignment_all_months: [false, "we don't take assignment on rentals"] },
+    rule: "Hard fail on assignment. Without it her cost isn't held to 20% (F9). DISQUALIFIED (NO_ASSIGNMENT).",
+    set: { sup: { wc: ["CALLING", "DISQUALIFIED"] } } },
+  { d: "Mon Nov 2", t: "09:30", th: "supplier", kind: "call", who: SUPNAME.ps, title: "Prairie State qualifies as the backup",
+    tx: [["Engine", "Hi, this is an automated assistant for a patient care team. For a standard K0001 for a Part B patient in 60614: are you taking new Medicare patients, accepting assignment for all rental months, do you have K0001 in stock, and do you deliver there?"],
+         ["Prairie State", "Yes to all of it. We cover the whole North Side. Delivery's about four business days after we get the order. I'm Ana."]],
+    facts: { accepting_new_medicare: [true, "Yes to all of it."], accepts_assignment_all_months: [true, "Yes to all of it."], k0001_in_stock: [true, "Yes to all of it."], serves_address: [true, "We cover the whole North Side."], delivery_eta_days: [4, "about four business days after we get the order"], contact: ["Ana", "I'm Ana."] },
+    rule: "QUALIFIED and kept as the warm backup. It isn't asked to commit.",
+    set: { sup: { ps: ["CALLING", "QUALIFIED"] } } },
+  { d: "Mon Nov 2", t: "13:12", th: "supplier", kind: "call", who: SUPNAME.ls, title: "Lakeshore still doesn't answer",
+    rule: "Second miss. Retry next business day.",
+    set: { sup: { ls: ["CALLING", "NO_ANSWER"] } } },
+  { d: "Tue Nov 3", t: "09:00", th: "order", kind: "timer", title: "No acknowledgment from the office",
+    rule: "The 1-business-day acknowledgment deadline passed. NUDGE: call the front desk and confirm the request actually landed.",
+    set: { order: ["NUDGE"], next: { order: "calling the front desk" } } },
+  { j: "Order fell in a hole", d: "Tue Nov 3", t: "09:02", th: "order", kind: "call", who: "Sunrise front desk", title: "\"We never got it\"",
+    tx: [["Engine", "Hi, this is an automated assistant for Eleanor Martinez's care team. We faxed a wheelchair order for Dr. Chen to sign yesterday and wanted to confirm you received it."],
+         ["Front desk", "I don't see anything from yesterday. Which number did you use?"],
+         ["Engine", "We used (312) 555-0199."],
+         ["Front desk", "That's the old fax. Use 0197, and put it to Maria's attention. She does all the equipment paperwork."]],
+    facts: { request_received: [false, "I don't see anything from yesterday."], cause: ["outdated fax number", "That's the old fax."], correct_fax: ["(312) 555-0197", "Use 0197"], owner: ["Maria", "put it to Maria's attention"] },
+    rule: "Resent to the corrected fax, addressed to the named owner. Back to REQUESTED. The practice record now has the new fax number, so the next case avoids this.",
+    set: { order: ["REQUESTED"] } },
+  { d: "Tue Nov 3", t: "09:40", th: "order", kind: "call", who: "Maria, Sunrise", title: "Maria confirms receipt",
+    tx: [["Engine", "Hi Maria, this is the automated assistant for Eleanor Martinez's care team. I just resent the wheelchair order to your attention."],
+         ["Maria", "Got it, it's here now. Dr. Chen's in clinic tomorrow, I'll put it in front of her."]],
+    facts: { request_received: [true, "Got it, it's here now."], expected_signing: ["Wed Nov 4", "Dr. Chen's in clinic tomorrow"] },
+    rule: "ACKNOWLEDGED, with a named owner. Signature is due Fri Nov 6 (3 business days).",
+    set: { order: ["ACKNOWLEDGED"], next: { order: "signature due Fri Nov 6" } } },
+  { d: "Tue Nov 3", t: "10:05", th: "supplier", kind: "call", who: SUPNAME.ls, title: "Lakeshore is out of K0001",
+    tx: [["Engine", "Hi, this is an automated assistant for a patient care team. Do you have a standard wheelchair, K0001, in stock for a Part B patient in 60614?"],
+         ["Lakeshore", "Standard chairs? We're out. Next shipment's about three weeks."]],
+    facts: { k0001_in_stock: [false, "We're out."], restock_days: [21, "about three weeks"] },
+    rule: "Out of stock and restock is more than 14 days away (D9), so DISQUALIFIED (NO_STOCK).",
+    set: { sup: { ls: ["CALLING", "DISQUALIFIED"] } } },
+  { j: "Wrong code caught", d: "Thu Nov 5", t: "11:40", th: "order", kind: "fax", who: "Sunrise Family Medicine", title: "Signed order has the wrong code and a thin note",
+    doc: DOC1, factsLabel: "LLM reads the fax and pre-screens the note",
+    facts: { beneficiary: ["Eleanor Martinez", "Patient: Eleanor Martinez"], description: ["Standard wheelchair", "Item: Standard wheelchair"], hcpcs: ["K0003", "HCPCS: K0003"], quantity: [1, "Qty: 1"], practitioner: ["Sarah Chen, MD", "Ordering provider: Sarah Chen, MD"], order_date: ["2026-11-04", "Date: 11/04/2026"], signed: [true, "/s/ Sarah Chen, MD"],
+      crit_A_mradl: ["mentioned", "unable to walk to bathroom without stopping to rest"], crit_B_walker_not_enough: ["not mentioned", null], crit_C_home_access: ["not mentioned", null], crit_D_home_use: ["mentioned", "daily use in apartment"], crit_E_willing: ["mentioned", "Patient agrees."], crit_G_caregiver: ["mentioned", "Daughter assists with transfers."] },
+    rule: "Validator: HCPCS K0003 (lightweight) doesn't match the description \"standard wheelchair\". K0003 also carries its own coverage criteria and the order-before-delivery rule (F5). The description and the note agree on a standard chair, so it's a clerical error, not a clinical one. Pre-screen: no sentence addresses criterion B or C. CORRECTION_REQUESTED for both, loop 1 of 2.",
+    set: { order: ["RECEIVED", "CORRECTION_REQUESTED"], next: { order: "calling Maria" } } },
+  { d: "Thu Nov 5", t: "11:45", th: "order", kind: "call", who: "Maria, Sunrise", title: "Ask for a corrected code and the missing criteria",
+    tx: [["Engine", "Hi Maria, two things on Eleanor Martinez's order. It's coded K0003, a lightweight chair, but the description and the note both say standard, K0001. Could Dr. Chen re-sign it as K0001? And the supplier will need the note to address criteria B and C on the checklist we sent: whether a walker is enough at home, and whether her home fits a wheelchair. If Dr. Chen assessed those at the visit, an addendum would cover it."],
+         ["Maria", "Our EHR defaults to K0003, I'll fix that. I'll show her the checklist. She's in tomorrow morning."]],
+    facts: { code_fix_accepted: [true, "I'll fix that."], routed_to_clinician: [true, "I'll show her the checklist."] },
+    rule: "The clerical fix is accepted. The documentation question goes to the clinician. The engine named the criteria and stopped there. It wrote no clinical text (D8).",
+    set: { next: { order: "corrected order due Fri" } } },
+  { d: "Fri Nov 6", t: "10:15", th: "order", kind: "fax", who: "Sunrise Family Medicine", title: "Corrected order and addendum pass",
+    doc: DOC2, factsLabel: "LLM reads the fax and pre-screens the addendum",
+    facts: { hcpcs: ["K0001", "HCPCS: K0001"], quantity: [1, "Qty: 1"], order_date: ["2026-11-06", "Date: 11/06/2026"], signed: [true, "/s/ Sarah Chen, MD"], addendum_dated: [true, "ADDENDUM 11/06/2026 to visit of 10/30/2026"],
+      crit_B_walker_not_enough: ["mentioned", "could not safely reach the bathroom using her walker"], crit_C_home_access: ["mentioned", "doorways in her apartment are wide enough for a wheelchair"] },
+    rule: "6 of 6 order elements. HCPCS K0001. Quantity 1. Dated after the visit. VALIDATED. The pre-screen finds no gaps. Lincoln Park is committed, so the order, her name and her MBI go to Lincoln Park only (D3).",
+    set: { order: ["RECEIVED", "VALIDATED", "SENT_TO_SUPPLIER"], next: { order: "waiting for the supplier's review" } } },
+  { d: "Fri Nov 6", t: "10:40", th: "supplier", kind: "call", who: "Dev, Lincoln Park DME", title: "Lincoln Park confirms and offers Monday",
+    tx: [["Engine", "Hi Dev, this is the automated assistant for Eleanor Martinez's care team. We faxed her order, MBI and visit note this morning."],
+         ["Dev", "Got the order and the note. Eligibility's clean, no other wheelchair on file, and she's Original Medicare. Note covers it. How's Monday, one to four?"]],
+    facts: { order_received: [true, "Got the order and the note."], eligibility_clean: [true, "Eligibility's clean, no other wheelchair on file"], plan: ["Original Medicare", "she's Original Medicare"], docs_sufficient: [true, "Note covers it."], delivery: ["Mon Nov 9, 13:00–16:00", "Monday, one to four"] },
+    rule: "Supplier CONFIRMED: it has the order, eligibility is clean, and a date is set. Order DOCS_OK. Two of three join inputs are ready. Next, Eleanor must approve the supplier and the window (D10).",
+    set: { sup: { lp: ["CONFIRMED"] }, order: ["DOCS_OK"], case: "HANDOFF_READY", next: { supplier: "delivery Mon Nov 9, 13–16", order: "done" } } },
+  { j: "Join fires", d: "Fri Nov 6", t: "11:00", th: "patient", kind: "call", who: "Eleanor Martinez", title: "Eleanor approves the supplier and window",
+    tx: [["Engine", "Good morning, Eleanor, it's the automated assistant from your care team. We found a supplier for your chair: Lincoln Park DME Services, a few blocks from you. Is it all right with you if they provide it? They can bring it Monday between one and four."],
+         ["Eleanor", "That's fine. Monday works. My daughter Rosa will be here."]],
+    facts: { consents_to_supplier: [true, "That's fine."], window_ok: [true, "Monday works."], caregiver_present: ["Rosa (daughter)", "My daughter Rosa will be here."] },
+    rule: "WINDOW_CONFIRMED. The join fires and the case is DELIVERY_SCHEDULED.",
+    set: { patient: ["WINDOW_CONFIRMED"], case: "DELIVERY_SCHEDULED", next: { patient: "post-delivery check Mon 16:30" } } },
+  { d: "Mon Nov 9", t: "16:30", th: "patient", kind: "call", who: "Eleanor Martinez", title: "Nobody came",
+    tx: [["Engine", "Hi Eleanor, it's the automated assistant from your care team. Did the wheelchair arrive this afternoon?"],
+         ["Eleanor", "No. Nobody came. Rosa took the afternoon off for this."]],
+    facts: { delivered: [false, "Nobody came."] },
+    rule: "The window was missed, so the patient goes back to INFORMED. Check with the supplier now. The ghost threshold is Tue end of day.",
+    set: { patient: ["INFORMED"], next: { patient: "update once the supplier is sorted", supplier: "calling Lincoln Park" } } },
+  { d: "Mon Nov 9", t: "16:35", th: "supplier", kind: "call", who: SUPNAME.lp, title: "Lincoln Park doesn't answer",
+    rule: "No answer. Retry tomorrow morning.",
+    set: {} },
+  { d: "Tue Nov 10", t: "09:00", th: "supplier", kind: "call", who: SUPNAME.lp, title: "Voicemail for Dev",
+    rule: "Second miss since the promised date. The voicemail has a callback number and an order reference, and no health details (D3).",
+    set: {} },
+  { d: "Tue Nov 10", t: "10:00", th: "supplier", kind: "call", who: "Ana, Prairie State", title: "Hedge: check the backup before the ghost threshold",
+    tx: [["Engine", "Hi Ana, it's the automated assistant from the care team. Last week you qualified for a K0001 referral for a patient in 60614. If we need you, could you still take it this week?"],
+         ["Ana", "We could. We're closed tomorrow for Veterans Day, so Thursday morning is the earliest. If you need us, send the order whenever and I'll check first thing Thursday."]],
+    facts: { still_available: [true, "We could."], earliest_delivery: ["Thu Nov 12 AM", "Thursday morning is the earliest"], will_accept_when_sent: [true, "send the order whenever"] },
+    rule: "Lincoln Park missed and isn't answering, so the backup is checked before the threshold. Her name isn't shared. Prairie State stays QUALIFIED.",
+    set: { next: { supplier: "ghost threshold Tue end of day" } } },
+  { j: "Supplier ghosts", d: "Tue Nov 10", t: "17:00", th: "supplier", kind: "timer", title: "Lincoln Park marked GHOSTED",
+    rule: "Promised date +1 business day, no delivery, two unanswered calls, so GHOSTED. The case drops back to OPEN. Prairie State is next, but Eleanor has to approve the switch before her details go anywhere (D3, D10). The validated order is reused, with no new request to the doctor (D5). Lincoln Park's no-show goes into the supplier history.",
+    set: { sup: { lp: ["GHOSTED"] }, case: "OPEN", next: { supplier: "Prairie State, after Eleanor approves", patient: "calling Eleanor now" } } },
+  { d: "Tue Nov 10", t: "17:10", th: "patient", kind: "call", who: "Eleanor Martinez", title: "Eleanor wavers over cost",
+    tx: [["Engine", "Eleanor, I'm sorry about yesterday. Lincoln Park didn't follow through, so we've stopped working with them. Prairie State Medical Supply, about two miles away, can bring the chair Thursday morning. Is it all right if we send them your order?"],
+         ["Eleanor", "Honestly, I don't know if I want to keep doing this. I just got a bill for fourteen hundred dollars from the knee surgery. I can't take on another bill every month. Maybe I'll just manage with the walker."],
+         ["Engine", "I understand. Would it be all right if someone from your care team calls you tomorrow to go through the cost with you?"],
+         ["Eleanor", "I suppose."]],
+    facts: { consents_to_supplier: ["unknown", "I don't know if I want to keep doing this."], cost_concern: [true, "I can't take on another bill every month."], considering_stopping: [true, "Maybe I'll just manage with the walker."], other_bill: ["$1,400 knee surgery bill", "a bill for fourteen hundred dollars from the knee surgery"], accepts_callback: [true, "I suppose."] },
+    rule: "cost_concern is true with a quote, so PATIENT_COST_CONCERN. The patient thread stops. The join can't fire without her consent, so the case is BLOCKED_ON_HUMAN. The supplier and order threads don't stop: Prairie State stays warm and the order stays valid. The engine didn't try to talk her into it. It only asked permission for a person to call.",
+    set: { patient: ["ESC_COST"], case: "BLOCKED_ON_HUMAN", next: { patient: "with a care advocate" } } },
+  { j: "Escalation", d: "Tue Nov 10", t: "17:11", th: "patient", kind: "escalation", title: "Packet to the care advocate queue",
+    packet: {
+      code: "PATIENT_COST_CONCERN",
+      blocks: "Patient thread. The join is waiting on her consent. The supplier and order threads keep running.",
+      question: "Does Eleanor want to go ahead, and does she need help paying?",
+      options: ["Proceed", "Proceed and start a QMB application", "Pause 30 days", "Close the case"],
+      numbers: [["Her share, months 1–3", "$6.85 / mo"], ["Her share, months 4–13", "$5.14 / mo"], ["Her total over 13 months", "≈ $72"], ["2026 deductible", "likely met (she said \"probably\")"], ["2027 deductible", "applies to 2027 rental months until met"], ["If she qualifies for QMB", "$0, and suppliers can't bill her"], ["Illinois QMB, 2026", "income ≤ ~$1,330 / mo, assets ≤ $9,950"]],
+      tried: ["Mon Nov 2: intro call, cost range explained", "Fri Nov 6: she approved Lincoln Park and the Monday window", "Mon Nov 9: Lincoln Park didn't deliver. Rosa took the afternoon off", "Tue Nov 10: asked her to approve Prairie State. She raised a $1,400 surgery bill"],
+      context: ["The visit note says she can't safely reach the bathroom with her walker, so managing with the walker carries risk.", "Prairie State can deliver Thursday morning. It is closed Wednesday for Veterans Day.", "The order is validated and reusable. No new paperwork is needed."]
+    },
+    rule: "Escalation raised by rule from a quoted fact. The packet is the advocate's whole briefing.",
+    set: {} },
+  { j: "Human decides", d: "Wed Nov 11", t: "10:30", th: "patient", kind: "human", who: "Care advocate (simulated)", title: "Advocate calls Eleanor and decides",
+    human: { picked: "Proceed and start a QMB application",
+      notes: "Called Eleanor for 25 minutes. Walked through the $72 total and explained that the surgery bill is separate. Her income is about $1,250 a month from Social Security, so she likely qualifies for QMB. Started the application with her. She wants the chair, approved Prairie State, and confirmed Thursday 9 to 12.",
+      fields: [["supplier_consent", "Prairie State Medical Supply"], ["window", "Thu Nov 12, 09:00–12:00"], ["qmb_application", "started, outcome pending"]] },
+    rule: "A typed decision came back. The engine resumes the patient thread with her consent and window recorded. The QMB outcome is tracked but doesn't block delivery.",
+    set: { patient: ["INFORMED", "WINDOW_CONFIRMED"], case: "OPEN", next: { patient: "post-delivery check Thu 11:00" } } },
+  { d: "Wed Nov 11", t: "10:35", th: "supplier", kind: "rule", title: "Engine resumes: order to Prairie State",
+    rule: "With her consent, the order, her name and her MBI go to Prairie State (D3). Ana's Tuesday quote, \"send the order whenever,\" counts as accepting the referral, so COMMITTED. Prairie State is closed for the holiday, so confirmation is due Thu 08:00 (D14).",
+    set: { sup: { ps: ["COMMITTED"] }, order: ["SENT_TO_SUPPLIER"], next: { supplier: "confirmation due Thu 08:00", order: "waiting for Prairie State's review" } } },
+  { d: "Thu Nov 12", t: "08:15", th: "supplier", kind: "call", who: "Ana, Prairie State", title: "Prairie State confirms",
+    tx: [["Engine", "Good morning Ana, it's the care team's automated assistant. Checking that you received Eleanor Martinez's order and note."],
+         ["Ana", "Got it all. Eligibility's clean, no other wheelchair on file. The note's fine. She's our first stop, around nine-thirty."]],
+    facts: { order_received: [true, "Got it all."], eligibility_clean: [true, "Eligibility's clean, no other wheelchair on file."], docs_sufficient: [true, "The note's fine."], delivery: ["Thu Nov 12 ~09:30", "She's our first stop, around nine-thirty."] },
+    rule: "Supplier CONFIRMED. Order DOCS_OK. Her window was already approved, so the join fires again: DELIVERY_SCHEDULED.",
+    set: { sup: { ps: ["CONFIRMED"] }, order: ["DOCS_OK"], case: ["HANDOFF_READY", "DELIVERY_SCHEDULED"], next: { supplier: "delivery ~09:30", order: "done" } } },
+  { d: "Thu Nov 12", t: "11:00", th: "patient", kind: "call", who: "Eleanor Martinez", title: "It's here",
+    tx: [["Engine", "Hi Eleanor, it's the automated assistant from your care team. Did the chair arrive?"],
+         ["Eleanor", "It's here. The driver showed Rosa how to fold it."]],
+    facts: { delivered: [true, "It's here."] },
+    rule: "DELIVERY_VERIFIED from her side. The supplier's proof of delivery is still needed (D11).",
+    set: { patient: ["DELIVERY_VERIFIED"], next: { patient: "done" } } },
+  { d: "Thu Nov 12", t: "11:15", th: "supplier", kind: "call", who: "Ana, Prairie State", title: "Proof of delivery and billing code",
+    tx: [["Ana", "Delivered at nine-forty and Rosa signed the delivery ticket. We're billing K0001 with RR and KH, first rental month, on assignment."]],
+    facts: { proof_of_delivery: [true, "Rosa signed the delivery ticket"], billed_hcpcs: ["K0001", "We're billing K0001"], modifiers: ["RR, KH", "with RR and KH"], on_assignment: [true, "on assignment"] },
+    rule: "The proof of delivery and her account agree (D11). The billed code matches the validated order. DELIVERED.",
+    set: { sup: { ps: ["DELIVERED"] }, case: "DELIVERED", next: { supplier: "done" } } },
+  { j: "Closed", d: "Thu Nov 12", t: "11:16", th: "case", kind: "system", title: "Case closed",
+    rule: "CLOSED after 8 business days, with Veterans Day excluded. The engine recovered on its own from a lost fax, a wrong code with a thin note, three suppliers that couldn't serve her, and a supplier that ghosted. One thing went to a person: her worry about cost, which took 25 minutes of an advocate's time.",
+    set: { case: "CLOSED", next: { supplier: "—", order: "—", patient: "—" } } }
+];
+
+/* ---------- machines ---------- */
+const M = {
+  case: { w: 980, h: 196, nodes: [
+      ["OPEN", 90, 70, "Open"], ["HANDOFF_READY", 290, 70, "Handoff ready"], ["DELIVERY_SCHEDULED", 490, 70, "Delivery scheduled"],
+      ["DELIVERED", 690, 70, "Delivered", "ok"], ["CLOSED", 890, 70, "Closed", "ok"],
+      ["BLOCKED_ON_HUMAN", 90, 166, "Blocked on human", "esc"], ["ABANDONED", 290, 166, "Abandoned", "bad"], ["PAUSED", 490, 166, "Paused (inpatient)", "warn"]],
+    edges: [
+      ["OPEN", "HANDOFF_READY", "join fires", { lo: [0, 18] }], ["HANDOFF_READY", "DELIVERY_SCHEDULED", "window agreed", { lo: [0, 18] }],
+      ["DELIVERY_SCHEDULED", "DELIVERED", "POD + patient", { lo: [0, 18] }], ["DELIVERED", "CLOSED", "code matches", { lo: [0, 18] }],
+      ["DELIVERY_SCHEDULED", "OPEN", "supplier ghosted", { b: 62 }],
+      ["OPEN", "BLOCKED_ON_HUMAN", "escalation", { b: 26, lo: [-6, 0], a: "end" }], ["BLOCKED_ON_HUMAN", "OPEN", "decision", { b: 26, lo: [6, 0], a: "start" }],
+      ["BLOCKED_ON_HUMAN", "ABANDONED", "closed by human", {}],
+      ["DELIVERY_SCHEDULED", "PAUSED", "admitted", { lo: [6, 0], a: "start" }], ["PAUSED", "OPEN", "discharged", { lo: [0, -6] }]] },
+  supplier: { w: 960, h: 316, nodes: [
+      ["NOT_CONTACTED", 80, 46, "Not contacted"], ["CALLING", 260, 46, "Calling"], ["QUALIFIED", 460, 46, "Qualified", "ok"],
+      ["COMMITTED", 660, 46, "Took referral", "ok"], ["CONFIRMED", 870, 46, "Has order, date set", "ok"],
+      ["NO_ANSWER", 260, 160, "No answer", "warn"], ["DISQUALIFIED", 460, 160, "Disqualified", "bad"], ["GHOSTED", 660, 160, "Ghosted", "bad"], ["DELIVERED", 870, 160, "Delivered", "ok"],
+      ["UNREACHABLE", 260, 274, "Unreachable", "bad"], ["ESC_AMBIGUOUS", 460, 274, "Human: ambiguous", "esc"], ["ESC_EXHAUSTED", 660, 274, "Human: exhausted", "esc"], ["ESC_ELIGIBILITY", 870, 274, "Human: eligibility", "esc"]],
+    edges: [
+      ["NOT_CONTACTED", "CALLING", "dial", { lo: [0, -8] }], ["CALLING", "NO_ANSWER", "no pickup", { b: 26, lo: [-6, 0], a: "end" }], ["NO_ANSWER", "CALLING", "retry", { b: 26, lo: [6, 0], a: "start" }],
+      ["NO_ANSWER", "UNREACHABLE", "3 misses", { lo: [6, 0], a: "start" }], ["CALLING", "QUALIFIED", "quoted facts pass", { lo: [0, -8] }],
+      ["CALLING", "DISQUALIFIED", "hard fail", {}], ["CALLING", "ESC_AMBIGUOUS", "no quote ×2", { lo: [-30, 0] }],
+      ["QUALIFIED", "COMMITTED", "takes referral", { lo: [0, -8] }], ["COMMITTED", "CONFIRMED", "order + eligibility", { lo: [0, -8] }],
+      ["COMMITTED", "DISQUALIFIED", "reconfirm fails", {}], ["COMMITTED", "ESC_ELIGIBILITY", "same/similar", { lo: [4, 30] }], ["CONFIRMED", "GHOSTED", "promised +1d", {}],
+      ["CONFIRMED", "DELIVERED", "POD", { lo: [6, 0], a: "start" }], ["GHOSTED", "ESC_EXHAUSTED", "none left", { lo: [6, 0], a: "start" }]] },
+  order: { w: 1000, h: 316, nodes: [
+      ["VERBAL_IN_CHART", 80, 46, "Verbal in chart"], ["REQUESTED", 250, 46, "Requested"], ["ACKNOWLEDGED", 420, 46, "Acknowledged"],
+      ["RECEIVED", 590, 46, "Received"], ["VALIDATED", 760, 46, "Validated", "ok"],
+      ["NUDGE", 250, 160, "Nudge, alt channel", "warn"], ["CORRECTION_REQUESTED", 590, 160, "Correction asked", "warn"],
+      ["SENT_TO_SUPPLIER", 760, 160, "Sent to supplier"], ["DOCS_OK", 926, 160, "Docs OK", "ok"],
+      ["ESC_UNSIGNED", 250, 274, "Human: unsigned", "esc"], ["ESC_CLINICAL", 590, 274, "Human: clinical fix", "esc"], ["ESC_DOCS", 760, 274, "Human: docs short", "esc"]],
+    edges: [
+      ["VERBAL_IN_CHART", "REQUESTED", "fax + checklist", { lo: [0, -8] }], ["REQUESTED", "ACKNOWLEDGED", "owner named", { lo: [0, -8] }],
+      ["ACKNOWLEDGED", "RECEIVED", "signed", { lo: [0, -8] }], ["RECEIVED", "VALIDATED", "rules pass", { lo: [0, -8] }],
+      ["REQUESTED", "NUDGE", "no ack 1d", { b: 26, lo: [-6, 0], a: "end" }], ["NUDGE", "REQUESTED", "resend", { b: 26, lo: [6, 0], a: "start" }],
+      ["ACKNOWLEDGED", "NUDGE", "unsigned 3d", {}], ["NUDGE", "ESC_UNSIGNED", "3 nudges", { lo: [6, 0], a: "start" }],
+      ["RECEIVED", "CORRECTION_REQUESTED", "error or gap", { b: 26, lo: [-6, 0], a: "end" }], ["CORRECTION_REQUESTED", "RECEIVED", "re-signed", { b: 26, lo: [6, 0], a: "start" }],
+      ["CORRECTION_REQUESTED", "ESC_CLINICAL", "clinical change", { lo: [6, 0], a: "start" }],
+      ["VALIDATED", "SENT_TO_SUPPLIER", "to committed", { lo: [6, 0], a: "start" }],
+      ["SENT_TO_SUPPLIER", "DOCS_OK", "notes OK", { lo: [0, 20] }], ["DOCS_OK", "SENT_TO_SUPPLIER", "re-sent on ghost", { b: 30 }],
+      ["SENT_TO_SUPPLIER", "ESC_DOCS", "still short", { lo: [6, 0], a: "start" }]] },
+  patient: { w: 800, h: 316, nodes: [
+      ["NOT_CONTACTED", 90, 46, "Not contacted"], ["INFORMED", 290, 46, "Informed"], ["WINDOW_CONFIRMED", 500, 46, "Supplier + window OK", "ok"],
+      ["DELIVERY_VERIFIED", 710, 46, "Delivery verified", "ok"], ["NO_ANSWER", 90, 160, "No answer", "warn"],
+      ["ESC_UNREACHABLE", 90, 274, "Human: unreachable", "esc"], ["ESC_COST", 330, 274, "Human: cost concern", "esc"], ["ESC_DECLINES", 540, 274, "Human: declines", "esc"]],
+    edges: [
+      ["NOT_CONTACTED", "INFORMED", "intro call", { lo: [0, 20] }], ["NOT_CONTACTED", "NO_ANSWER", "no pickup", { lo: [-6, 0], a: "end" }],
+      ["NO_ANSWER", "INFORMED", "reached", {}], ["NO_ANSWER", "ESC_UNREACHABLE", "4 tries, 3d", { lo: [6, 0], a: "start" }],
+      ["INFORMED", "WINDOW_CONFIRMED", "consents", { lo: [0, 20] }], ["WINDOW_CONFIRMED", "INFORMED", "missed or slipped", { b: 30 }],
+      ["WINDOW_CONFIRMED", "DELIVERY_VERIFIED", "post-delivery call", { lo: [0, 20] }],
+      ["INFORMED", "ESC_COST", "cost concern", { lo: [-6, 0], a: "end" }], ["ESC_COST", "INFORMED", "human: proceed", { b: 34, lo: [4, 0], a: "start" }],
+      ["INFORMED", "ESC_DECLINES", "declines", {}]] }
+};
+const NW = 136, NH = 32;
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function clip(cx, cy, tx, ty) {
+  const dx = tx - cx, dy = ty - cy;
+  if (!dx && !dy) return [cx, cy];
+  const t = Math.min(dx ? (NW / 2 + 3) / Math.abs(dx) : Infinity, dy ? (NH / 2 + 3) / Math.abs(dy) : Infinity);
+  return [cx + dx * t, cy + dy * t];
+}
+function drawMachine(key, svg, active, visited, done, counts) {
+  const m = M[key];
+  svg.setAttribute("viewBox", `0 0 ${m.w} ${m.h}`);
+  svg.replaceChildren();
+  const defs = el("defs", {}, svg);
+  for (const [id, cls] of [["b", "mk-base"], ["o", "mk-on"]]) {
+    const mk = el("marker", { id: `${key}-${id}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", class: cls }, mk);
+  }
+  const pos = Object.fromEntries(m.nodes.map(n => [n[0], [n[1], n[2]]]));
+  const labels = [];
+  for (const [from, to, label, o] of m.edges) {
+    const [x1, y1] = pos[from], [x2, y2] = pos[to];
+    const isDone = done.has(`${from}>${to}`);
+    const g = el("g", { class: "e" + (isDone ? " done" : "") }, svg);
+    let d, lx, ly;
+    if (o.b) {
+      const len = Math.hypot(x2 - x1, y2 - y1), nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+      const cx = (x1 + x2) / 2 + nx * o.b, cy = (y1 + y2) / 2 + ny * o.b;
+      const p0 = clip(x1, y1, cx, cy), p1 = clip(x2, y2, cx, cy);
+      d = `M${p0[0]},${p0[1]} Q${cx},${cy} ${p1[0]},${p1[1]}`;
+      lx = 0.25 * p0[0] + 0.5 * cx + 0.25 * p1[0]; ly = 0.25 * p0[1] + 0.5 * cy + 0.25 * p1[1];
+    } else {
+      const p0 = clip(x1, y1, x2, y2), p1 = clip(x2, y2, x1, y1);
+      d = `M${p0[0]},${p0[1]} L${p1[0]},${p1[1]}`;
+      lx = (p0[0] + p1[0]) / 2; ly = (p0[1] + p1[1]) / 2;
+    }
+    el("path", { d, "marker-end": `url(#${key}-${isDone ? "o" : "b"})` }, g);
+    const lo = o.lo || [0, 0];
+    labels.push([g, lx + lo[0], ly + lo[1] + 3.5, o.a || "middle", label]);
+  }
+  for (const [g, x, y, a, label] of labels) { const t = el("text", { x, y, "text-anchor": a }, g); t.textContent = label; }
+  for (const [id, x, y, label, kind] of m.nodes) {
+    const cls = ["n", kind || "", active.has(id) ? "on" : visited.has(id) ? "visited" : ""].join(" ");
+    const g = el("g", { class: cls }, svg);
+    el("rect", { x: x - NW / 2, y: y - NH / 2, width: NW, height: NH, rx: 6 }, g);
+    const t = el("text", { x, y: y + 4, "text-anchor": "middle" }, g); t.textContent = label;
+    if (counts && counts[id]) {
+      const b = el("g", { class: "badge" }, g);
+      el("circle", { cx: x + NW / 2 - 2, cy: y - NH / 2 + 1, r: 9 }, b);
+      const bt = el("text", { x: x + NW / 2 - 2, y: y - NH / 2 + 4.5, "text-anchor": "middle" }, b); bt.textContent = counts[id];
+    }
+  }
+}
+
+/* ---------- simulation ---------- */
+function snapshot(upto) {
+  const s = { case: null, order: null, patient: null, sup: {}, next: {}, visited: { case: new Set(), order: new Set(), patient: new Set(), supplier: new Set(["NOT_CONTACTED"]) },
+    done: { case: new Set(), order: new Set(), patient: new Set(), supplier: new Set() }, calls: 0, escalations: 0, why: {}, openEsc: null };
+  SUP.forEach(x => s.sup[x.id] = "NOT_CONTACTED");
+  const step = (mk, cur, nxt) => { if (cur && cur !== nxt) s.done[mk].add(`${cur}>${nxt}`); s.visited[mk].add(nxt); return nxt; };
+  for (let i = 0; i <= upto; i++) {
+    const e = EVENTS[i], st = e.set || {};
+    if (e.kind === "call" || e.kind === "fax") s.calls++;
+    if (e.kind === "escalation") { s.escalations++; s.openEsc = e.packet.code; }
+    if (e.kind === "human") s.openEsc = null;
+    for (const k of ["case", "order", "patient"]) if (st[k]) for (const v of [].concat(st[k])) s[k] = step(k, s[k], v);
+    if (st.sup) for (const id in st.sup) {
+      for (const v of [].concat(st.sup[id])) s.sup[id] = step("supplier", s.sup[id], v);
+      s.why[id] = e.rule;
+    }
+    if (st.next) Object.assign(s.next, st.next);
+  }
+  return s;
+}
+function sourceText(e) {
+  if (e.doc) return e.doc;
+  if (e.tx) return e.tx.filter(([w]) => w !== "Engine").map(([, s]) => s).join("\n");
+  return "";
+}
+
+const TONE = st => {
+  if (!st) return "";
+  if (/^ESC|BLOCKED/.test(st)) return "human";
+  if (/DISQUALIFIED|UNREACHABLE|GHOSTED|ABANDONED/.test(st)) return "bad";
+  if (/NO_ANSWER|NUDGE|CORRECTION|PAUSED/.test(st)) return "warn";
+  if (/QUALIFIED|COMMITTED|CONFIRMED|VALIDATED|DOCS_OK|DELIVERED|VERIFIED|CLOSED/.test(st)) return "ok";
+  return "live";
+};
+const chip = st => `<span class="chip" data-tone="${TONE(st)}">${st || "—"}</span>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const SHORT = { NOT_ACCEPTING: /accepting_new/, NO_ASSIGNMENT: /assignment/, NO_STOCK: /stock/ };
+function supReason(id, st, s) {
+  if (st === "DISQUALIFIED") { const w = s.why[id] || ""; for (const k in SHORT) if (SHORT[k].test(w)) return k; return "hard fail"; }
+  if (st === "GHOSTED") return "no delivery, 2 unanswered calls";
+  if (st === "NO_ANSWER") return "retry scheduled";
+  if (st === "COMMITTED") return "took the referral";
+  if (st === "QUALIFIED") return "warm backup";
+  if (st === "CONFIRMED") return "has order, date set";
+  if (st === "DELIVERED") return "proof of delivery, billed K0001-RR";
+  if (st === "NOT_CONTACTED" && SUP.find(x => x.id === id).mi > 9) return "ranked last: likely out of area";
+  return "";
+}
+
+const ILLUSTRATIVE = [
+  ["Robert Kim, 81", "Hospital bed (E0260)", "BLOCKED_ON_HUMAN", "CONFIRMED", "ESC_DOCS", "INFORMED", "DOCS_INSUFFICIENT: supplier still rejects the note after an addendum. Dr. Patel may need to re-examine."],
+  ["Harold Nguyen, 69", "CPAP (E0601)", "BLOCKED_ON_HUMAN", "COMMITTED", "VALIDATED", "ESC_UNREACHABLE", "PATIENT_UNREACHABLE: 4 tries over 3 business days. Try the emergency contact."],
+  ["Gloria Ruiz, 77", "Oxygen concentrator (E1390)", "OPEN", "COMMITTED", "ACKNOWLEDGED", "INFORMED", "No"],
+  ["Betty Okafor, 84", "Walker (E0143)", "DELIVERY_SCHEDULED", "CONFIRMED", "DOCS_OK", "WINDOW_CONFIRMED", "No"]
+];
+
+let idx = EVENTS.findIndex(e => e.kind === "escalation");
+const $ = id => document.getElementById(id);
+
+function factsTable(e) {
+  const src = sourceText(e);
+  const rows = Object.entries(e.facts).map(([k, [v, q]]) => {
+    const found = q != null && src.includes(q);
+    const mark = q == null ? `<span class="miss">no quote → treated as not present</span>` : found ? `<span class="ok">✓ found</span> “${esc(q)}”` : `<span class="miss">✗ quote not found → unknown</span>`;
+    return `<tr><td class="k">${esc(k)}</td><td class="v">${esc(typeof v === "string" ? v : JSON.stringify(v))}</td><td class="q">${mark}</td></tr>`;
+  }).join("");
+  return `<table class="ft">${rows}</table>`;
+}
+
+function render() {
+  const s = snapshot(idx), e = EVENTS[idx];
+  $("range").value = idx;
+  $("when").innerHTML = `<b>${esc(e.d)} ${esc(e.t)}</b> · step ${idx + 1}/${EVENTS.length}`;
+
+  const supStates = Object.values(s.sup);
+  const bestSup = ["DELIVERED", "CONFIRMED", "COMMITTED", "QUALIFIED", "CALLING", "NO_ANSWER"].find(x => supStates.includes(x)) || "NOT_CONTACTED";
+  const tried = supStates.filter(x => x !== "NOT_CONTACTED").length;
+
+  $("tiles").innerHTML = [
+    ["Case", chip(s.case)], ["Sim time", `${esc(e.d)}, ${esc(e.t)}`], ["Calls and faxes", s.calls], ["Suppliers tried", `${tried} / 12`],
+    ["Human escalations", `<span class="human">${s.escalations}</span>`]
+  ].map(([k, v]) => `<div class="tile"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+
+  const lanes = [
+    ["Supplier thread", "12 enrolled suppliers", bestSup, s.next.supplier, `${tried} contacted · her name shared only after commit and consent`],
+    ["Order thread", "Sunrise Family Medicine · Maria", s.order, s.next.order, "Standard written order, K0001, plus visit note"],
+    ["Patient thread", "Eleanor Martinez · daughter Rosa", s.patient, s.next.patient, "Quoted: $6.85/mo, then $5.14/mo, ≈ $72 total, plus any unmet deductible"]
+  ];
+  $("lanes").innerHTML = lanes.map(([name, who, st, nxt, extra]) => `
+    <div class="lane" data-tone="${TONE(st)}">
+      <div class="row"><h3>${name}</h3>${chip(st)}</div>
+      <div class="who">${esc(who)}</div>
+      <dl><dt>Next</dt><dd>${esc(nxt || "—")}</dd><dt>Note</dt><dd>${esc(extra)}</dd></dl>
+    </div>`).join("");
+
+  $("log").innerHTML = EVENTS.map((ev, i) => {
+    const tg = ev.kind === "call" ? `<span class="tag call">call</span>` : ev.kind === "fax" ? `<span class="tag call">fax</span>` : ev.kind === "timer" ? `<span class="tag timer">timer</span>` : ev.kind === "escalation" ? `<span class="tag esc">escalation</span>` : ev.kind === "human" ? `<span class="tag human">human</span>` : `<span class="tag rules">${ev.kind}</span>`;
+    return `<div class="ev ${i === idx ? "cur" : i > idx ? "future" : ""}" data-i="${i}" tabindex="0" role="button" aria-label="${esc(ev.d + " " + ev.t + ": " + ev.title)}">
+      <div class="t">${esc(ev.d.slice(0, 3))} ${esc(ev.d.slice(4))}<br>${esc(ev.t)}</div>
+      <div class="h">${tg}<span>${esc(ev.title)}</span></div></div>`;
+  }).join("");
+  const cur = $("log").querySelector(".ev.cur");
+  if (cur) { const L = $("log"); L.scrollTo({ top: Math.max(0, cur.offsetTop - L.clientHeight / 2), behavior: "auto" }); }
+
+  let det = `<div class="meta"><span class="chip" data-tone="live">${esc(e.th)} thread</span><span>${esc(e.d)} · ${esc(e.t)}</span>${e.who ? `<span>· ${esc(e.who)}</span>` : ""}</div><h3>${esc(e.title)}</h3>`;
+  if (e.tx) {
+    det += `<div class="panel tx"><div class="ph"><span><span class="tag call">voice call</span> transcript</span><span class="tag mock">mocked: LLM roleplay with a hidden persona</span></div>` +
+      e.tx.map(([who, said]) => `<div class="line ${who === "Engine" ? "eng" : ""}"><b>${esc(who)}:</b> ${esc(said)}</div>`).join("") + `</div>`;
+  }
+  if (e.doc) det += `<div class="panel tx"><div class="ph"><span><span class="tag call">fax</span> document</span><span class="tag mock">mocked document</span></div><pre class="doc">${esc(e.doc)}</pre></div>`;
+  if (e.facts) {
+    det += `<div class="panel facts"><div class="ph"><span><span class="tag llm">LLM</span> ${esc(e.factsLabel || "transcript → facts, each with a quote")}</span><span><span class="tag rules">Rules</span> check each quote</span></div>${factsTable(e)}</div>`;
+  }
+  if (e.packet) {
+    const p = e.packet;
+    det += `<div class="panel packet"><div class="ph"><span class="tag esc">escalation packet</span><span class="chip" data-tone="human">${esc(p.code)}</span></div>
+      <div class="q">${esc(p.question)}</div>
+      <div class="opts">${p.options.map(o => `<span class="opt">${esc(o)}</span>`).join("")}</div>
+      <div class="line" style="font-size:13px"><b>Blocks:</b> ${esc(p.blocks)}</div>
+      <h4>Numbers, computed by rules</h4><dl class="kv">${p.numbers.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+      <h4>What was tried</h4><ul>${p.tried.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+      <h4>Context</h4><ul>${p.context.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+      <h4>Thread states right now</h4><dl class="kv"><dt>Supplier</dt><dd>${chip(bestSup)} Prairie State is the warm backup</dd><dt>Order</dt><dd>${chip(s.order)}</dd><dt>Patient</dt><dd>${chip(s.patient)}</dd></dl></div>`;
+  }
+  if (e.human) {
+    const h = e.human, opts = EVENTS.find(x => x.packet).packet.options;
+    det += `<div class="panel humanact"><div class="ph"><span class="tag human">human action</span><span class="tag mock">simulated in the demo</span></div>
+      <h4>Picked answer</h4><div class="opts">${opts.map(o => `<span class="opt ${o === h.picked ? "picked" : ""}">${esc(o)}</span>`).join("")}</div>
+      <h4>Advocate's note</h4><div class="line" style="font-size:13.5px">${esc(h.notes)}</div>
+      <h4>Typed fields back to the engine</h4><dl class="kv">${h.fields.map(([k, v]) => `<dt class="mono">${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>`;
+  }
+  det += `<div class="panel rule"><div class="ph"><span><span class="tag rules">Rules</span> decision</span></div><div class="line">${esc(e.rule)}</div></div>`;
+  if (e.kind === "call") det += `<div class="prod">In production this is an outbound voice call, for example an ElevenLabs agent reading the script the LLM wrote. The engine only ever sees the transcript.</div>`;
+  if (e.kind === "fax") det += `<div class="prod">In production this is an eFax service or the practice portal. An incoming fax image goes through the same extraction step.</div>`;
+  $("detail").innerHTML = det;
+
+  $("supBody").innerHTML = SUP.map(x => {
+    const st = s.sup[x.id];
+    return `<tr><td>${esc(x.name)}<div class="persona">${esc(x.persona)}</div></td><td class="num">${esc(x.phone)}</td><td>${esc(x.addr)}</td><td class="num">${x.mi.toFixed(1)} mi</td><td>${chip(st)}</td><td style="font-size:12.5px;color:var(--muted)">${esc(supReason(x.id, st, s))}</td></tr>`;
+  }).join("");
+
+  const qrow = (p, eq, c, su, o, pa, hum, live) => `<tr class="${live ? "live" : ""}"><td>${esc(p)}${live ? "" : '<span class="ex">example</span>'}</td><td>${esc(eq)}</td><td>${chip(c)}</td><td>${chip(su)}</td><td>${chip(o)}</td><td>${chip(pa)}</td><td style="font-size:12.5px">${/^No$/.test(hum) ? '<span style="color:var(--muted)">No</span>' : `<span style="color:var(--human)">${esc(hum)}</span>`}</td></tr>`;
+  const eleanorHuman = s.openEsc ? `${s.openEsc}: she may stop over cost. Advocate to call and screen for QMB.` : "No";
+  $("queueBody").innerHTML = qrow("Eleanor Martinez, 72", "Standard manual wheelchair (K0001)", s.case, bestSup, s.order, s.patient, eleanorHuman, true) +
+    ILLUSTRATIVE.map(r => qrow(...r, false)).join("");
+
+  const counts = {}; supStates.forEach(x => counts[x] = (counts[x] || 0) + 1);
+  drawMachine("case", $("m-case"), new Set([s.case]), s.visited.case, s.done.case);
+  drawMachine("supplier", $("m-supplier"), new Set(supStates), s.visited.supplier, s.done.supplier, counts);
+  drawMachine("order", $("m-order"), new Set([s.order]), s.visited.order, s.done.order);
+  drawMachine("patient", $("m-patient"), new Set([s.patient]), s.visited.patient, s.done.patient);
+}
+
+function go(i) { idx = Math.max(0, Math.min(EVENTS.length - 1, i)); render(); }
+$("range").max = EVENTS.length - 1;
+$("range").addEventListener("input", ev => go(+ev.target.value));
+$("prev").addEventListener("click", () => go(idx - 1));
+$("next").addEventListener("click", () => go(idx + 1));
+let timer = null;
+$("play").addEventListener("click", () => {
+  if (timer) { clearInterval(timer); timer = null; $("play").textContent = "Play"; return; }
+  if (idx >= EVENTS.length - 1) go(0);
+  $("play").textContent = "Pause";
+  timer = setInterval(() => { if (idx >= EVENTS.length - 1) { clearInterval(timer); timer = null; $("play").textContent = "Play"; return; } go(idx + 1); }, 1400);
+});
+$("log").addEventListener("click", ev => { const t = ev.target.closest(".ev"); if (t) go(+t.dataset.i); });
+$("log").addEventListener("keydown", ev => { const t = ev.target.closest(".ev"); if (t && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); go(+t.dataset.i); } });
+$("showPersona").addEventListener("change", ev => $("supTable").classList.toggle("hide-persona", !ev.target.checked));
+const J = $("jumps");
+EVENTS.forEach((ev, i) => { if (!ev.j) return; const b = document.createElement("button"); b.type = "button"; b.textContent = ev.j; b.addEventListener("click", () => go(i)); J.appendChild(b); });
+render();
+</script>
+</body>
+</html>

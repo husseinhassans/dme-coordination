@@ -1,0 +1,25 @@
+[project]
+name = "dme"
+version = "0.1.0"
+description = "DME back-end coordination engine (take-home prototype)"
+requires-python = ">=3.12"
+dependencies = [
+  "anthropic>=0.69",
+  "pydantic>=2.8",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dme"]
