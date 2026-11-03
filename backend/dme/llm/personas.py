@@ -188,7 +188,7 @@ class PersonaParty:
             f"{self.situation(self.goal)}"
         )
         text = _clean(await self.llm.text(role="persona", system=system,
-                                          messages=_messages(transcript), max_tokens=300),
+                                          messages=_messages(transcript), max_tokens=1200),
                       self.speaker_names())
         if not text or HANGUP in text.casefold():
             return None

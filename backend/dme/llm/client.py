@@ -55,6 +55,18 @@ class LLMError(RuntimeError):
     """The model did not return usable output (refusal, truncation, bad JSON)."""
 
 
+class BudgetExceeded(LLMError):
+    """The run hit its dollar cap (DME_BUDGET_USD). No further requests are sent."""
+
+
+# Rough $/million tokens (input, output), deliberately on the high side so the cap trips early.
+PRICE_PER_MTOK: dict[Role, tuple[float, float]] = {"caller": (3.0, 15.0), "persona": (1.0, 5.0)}
+
+
+def budget_usd() -> float:
+    return float(os.environ.get("DME_BUDGET_USD", "3"))
+
+
 class LLM(Protocol):
     async def text(self, *, role: Role, system: str, messages: list[dict], max_tokens: int = 400) -> str: ...
 
@@ -86,11 +98,21 @@ class AnthropicLLM:
             client = anthropic.AsyncAnthropic(api_key=key, max_retries=max_retries, timeout=timeout)
         self._client = client
         self.stats: list[CallStat] = []   # per-request latency, for the report / debugging
+        self.spent_usd = 0.0              # estimated from response usage
+        self.budget_usd = budget_usd()
 
     async def _create(self, role: Role, kind: str, **params: Any) -> Any:
+        if self.spent_usd >= self.budget_usd:
+            raise BudgetExceeded(f"run budget of ${self.budget_usd:.2f} reached "
+                                 f"(spent ~${self.spent_usd:.2f}); set DME_BUDGET_USD to raise it")
         t0 = time.perf_counter()
         resp = await self._client.messages.create(model=model_for(role), **params)
         self.stats.append(CallStat(role, kind, time.perf_counter() - t0))
+        u = resp.usage
+        p_in, p_out = PRICE_PER_MTOK[role]
+        tokens_in = (u.input_tokens or 0) + (getattr(u, "cache_creation_input_tokens", 0) or 0) \
+            + 0.1 * (getattr(u, "cache_read_input_tokens", 0) or 0)
+        self.spent_usd += (tokens_in * p_in + (u.output_tokens or 0) * p_out) / 1e6
         if resp.stop_reason == "refusal":
             raise LLMError(f"model refused ({role}/{kind})")
         if resp.stop_reason == "max_tokens":
@@ -122,6 +144,8 @@ class AnthropicLLM:
                                    "format": {"type": "json_schema", "schema": schema}},
                 )
                 return json.loads(self._first_text(resp))
+            except BudgetExceeded:
+                raise
             except (json.JSONDecodeError, LLMError) as e:
                 last = e
                 log.warning("structured output failed, retrying once: %s", e)

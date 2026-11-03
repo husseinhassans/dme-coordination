@@ -50,13 +50,16 @@ async def main(verbose: bool, out: Path | None) -> int:
     session.seats.update({"supplier": "auto", "office": "auto", "patient": "auto", "advocate": "auto"})
     session._build()  # rebuild with the all-autopilot seats
     session.engine.set_pace(0)
-    await session.engine.run()
+    try:
+        await session.engine.run()
+    except Exception as exc:  # noqa: BLE001 - budget cap or API error: still print the summary
+        print(f"{PINK}STOPPED {exc}{RESET}")
 
     snap = session.engine.snapshot()
     mins = (time.monotonic() - started) / 60
     calls = len(snap.calls)
     print(f"\n{BOLD}Final:{RESET} case {snap.case_state} · order {snap.order_state} · patient {snap.patient_state}")
-    print(f"{calls} calls · {len(snap.escalations)} escalation(s) · sim {snap.now:%a %b %d %H:%M} · {mins:.1f} real minutes")
+    print(f"{calls} calls · {len(snap.escalations)} escalation(s) · sim {snap.now:%a %b %d %H:%M} · {mins:.1f} real minutes · ~${session.llm.spent_usd:.2f} API spend")
     if out:
         out.write_text(json.dumps({"snapshot": snap.model_dump(mode="json"), "messages": log}, indent=1, default=str))
         print(f"Wrote {out}")

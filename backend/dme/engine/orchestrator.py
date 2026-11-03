@@ -323,7 +323,7 @@ class Engine(EscalationsMixin, PatientThread, SupplierThread, OrderThread):
         if thread == "order":
             return self.order_state == "DOCS_OK" and self._order_supplier == sup
         if thread == "patient":
-            return self.patient_state == "WINDOW_CONFIRMED" and self._consented == sup
+            return self.patient_state in ("WINDOW_CONFIRMED", "DELIVERY_VERIFIED") and self._consented == sup
         return True
 
     def _join_blocked(self) -> bool:

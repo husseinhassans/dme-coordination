@@ -11,7 +11,7 @@ from dme.engine import calendar as cal
 from dme.engine import rules
 from dme.engine.geo import rank_by_distance
 from dme.engine.policy import (  # §10 timer values
-    IN_FLIGHT, RETRY_DELAYS, MAX_RETRIES, RECONFIRM_BUSINESS_DAYS, fmt_day, fmt_time,
+    IN_FLIGHT, POD_CHASES, RETRY_DELAYS, MAX_RETRIES, RECONFIRM_BUSINESS_DAYS, fmt_day, fmt_time,
 )
 
 
@@ -356,6 +356,23 @@ class SupplierThread:
         if not self._reached(rec):
             n = self._post_miss_misses[sid] = self._post_miss_misses.get(sid, 0) + 1
             title = "Voicemail" if rec.outcome == "voicemail" else f"{name} doesn't answer"
+            if self._patient_said_delivered:
+                # She has the chair; only the paperwork is missing. A supplier that delivered
+                # isn't a ghost, so keep chasing the proof of delivery each business day, then
+                # hand it to a person (D11).
+                if n < POD_CHASES:
+                    when = cal.call_slot(cal.add_business_days(self._clock.now, 1))  # type: ignore[arg-type]
+                    await self._event("supplier", "call", title,
+                                      f"Eleanor already has the chair, so this isn't a no-show: only the proof of "
+                                      f"delivery is missing. Retry {fmt_time(when)} (attempt {n} of {POD_CHASES}).",
+                                      call_id=rec.id)
+                    self._at(when, lambda: self._supplier_delivery_check(sid), f"retry POD {sid}")
+                else:
+                    await self._event("supplier", "call", title,
+                                      f"{POD_CHASES} tries and no proof of delivery. A person chases the signed "
+                                      "delivery ticket (D11).", call_id=rec.id)
+                    await self._ambiguous("supplier", ["delivered"], rec.id, kind="pod_mismatch", sid=sid)
+                return
             if n == 1:
                 when = cal.call_slot(self._clock.now + RETRY_DELAYS[0])  # type: ignore[operator]
                 await self._event("supplier", "call", title, f"No answer. Retry {fmt_time(when)}.", call_id=rec.id)
@@ -430,8 +447,8 @@ class SupplierThread:
     async def _ghost_check(self, sid: str) -> None:
         """§5: promised date +1 business day with no delivery → GHOSTED → next candidate."""
         s = self.suppliers[sid]
-        if s.state != "CONFIRMED":
-            return
+        if s.state != "CONFIRMED" or self._patient_said_delivered:
+            return  # she has the chair: a missing proof of delivery is chased, not ghosted
         tx: list[Transition] = []
         self._sup_move(sid, "GHOSTED", tx)
         s.reason = "GHOSTED"

@@ -10,6 +10,7 @@ INTAKE_OFFICE_FAX = "(312) 555-0199"
 ENGINE_FAX = "care team (engine)"
 
 IN_FLIGHT = 3                                    # §10: supplier candidates in flight
+POD_CHASES = 4   # proof-of-delivery calls after she confirms delivery, then a person
 RETRY_DELAYS = [timedelta(hours=4), 1, 2]        # §10: +4h, +1 bd, +2 bd (ints = business days)
 MAX_RETRIES = 3                                  # §5: a candidate missing every retry is UNREACHABLE
 PATIENT_MAX_TRIES = 4                            # §7: 4 tries over 3 business days

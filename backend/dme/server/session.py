@@ -65,7 +65,7 @@ class Session:
         self._auto_decided: dict[str, int] = {}
         self.directory = load_directory()
         self._names = {s.id: s.name for s in self.directory}
-        llm = AnthropicLLM()
+        llm = self.llm = AnthropicLLM()
         self.cast = AutopilotCast(llm=llm, now=self._now)
         self.runner = LLMCallRunner(llm, on_utterance=self._on_utterance, on_facts=self._on_facts, now=self._now)
         self.fax_desk = SeatFaxDesk(self.seats, self.cast.fax_desk, self.emit)

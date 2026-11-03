@@ -230,3 +230,26 @@ async def test_office_silent_after_correction_escalates_unsigned():
     engine = await run(script, {"ORDER_UNSIGNED": ("Pause", None, {})}, desk=SilentAfterCorrectionDesk())
     assert codes(engine) == ["ORDER_UNSIGNED"]
     assert engine.order_state == "CORRECTION_REQUESTED" and engine.case_state == "ABANDONED"
+
+
+# ---------------------------------------------------------------- delivered but no paperwork
+
+async def test_supplier_silent_after_patient_confirms_is_not_ghosted():
+    """Live run 2: she said the chair arrived, then the supplier missed two POD calls and
+    the ghost timer fired anyway. A supplier that delivered isn't a no-show."""
+    script = demo_script()
+    pod = script[("supplier_delivery_check", "ps")]
+    script[("supplier_delivery_check", "ps")] = [NO_ANSWER, NO_ANSWER, *pod]
+    engine = await run(script)
+    assert not any(t.to == "GHOSTED" and t.entity == "ps" for e in engine.events for t in e.transitions)
+    assert engine.snapshot().case_state == "CLOSED"
+
+
+async def test_supplier_never_sends_pod_goes_to_a_person():
+    script = demo_script()
+    script[("supplier_delivery_check", "ps")] = [NO_ANSWER] * 4
+    decisions = {"AMBIGUOUS_CALL_OUTCOME": ("Set fact", "Got the signed ticket by fax.", {"delivered": "yes", "billed_hcpcs": "K0001"})}
+    engine = await run(script, decisions=decisions, stop_when_unscripted=True)
+    assert not any(t.to == "GHOSTED" and t.entity == "ps" for e in engine.events for t in e.transitions)
+    assert "AMBIGUOUS_CALL_OUTCOME" in codes(engine)
+    assert engine.snapshot().case_state == "CLOSED"
