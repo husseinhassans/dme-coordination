@@ -41,8 +41,11 @@ EFFORT: dict[Role, str] = {"caller": "low", "persona": "low"}
 
 
 def api_key() -> str | None:
-    """ANTHROPIC_API_KEY, else ANTHROPIC_API_KEY_PERSONAL. Never logged."""
-    return os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY_PERSONAL") or None
+    """DME_ANTHROPIC_API_KEY (this project's own key), else ANTHROPIC_API_KEY. Never logged.
+
+    The project key wins so a general ANTHROPIC_API_KEY exported for other tools is never
+    billed by accident."""
+    return os.environ.get("DME_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or None
 
 
 def model_for(role: Role) -> str:
@@ -91,12 +94,10 @@ class AnthropicLLM:
 
     def __init__(self, *, client: anthropic.AsyncAnthropic | None = None, max_retries: int = 3,
                  timeout: float = 60.0) -> None:
-        if client is None:
-            key = api_key()
-            if not key:
-                raise LLMError("No API key: set ANTHROPIC_API_KEY or ANTHROPIC_API_KEY_PERSONAL")
-            client = anthropic.AsyncAnthropic(api_key=key, max_retries=max_retries, timeout=timeout)
+        # Built on first use: the server (and the key-free replay) start without a key,
+        # and a live run reports the missing key when it makes its first call.
         self._client = client
+        self._client_args = {"max_retries": max_retries, "timeout": timeout}
         self.stats: list[CallStat] = []   # per-request latency, for the report / debugging
         self.spent_usd = 0.0              # estimated from response usage
         self.budget_usd = budget_usd()
@@ -105,6 +106,11 @@ class AnthropicLLM:
         if self.spent_usd >= self.budget_usd:
             raise BudgetExceeded(f"run budget of ${self.budget_usd:.2f} reached "
                                  f"(spent ~${self.spent_usd:.2f}); set DME_BUDGET_USD to raise it")
+        if self._client is None:
+            key = api_key()
+            if not key:
+                raise LLMError("No API key: set DME_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY to run live")
+            self._client = anthropic.AsyncAnthropic(api_key=key, **self._client_args)
         t0 = time.perf_counter()
         resp = await self._client.messages.create(model=model_for(role), **params)
         self.stats.append(CallStat(role, kind, time.perf_counter() - t0))

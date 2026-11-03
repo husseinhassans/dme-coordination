@@ -1,5 +1,5 @@
 """Live tests against the Anthropic API. Skipped unless ANTHROPIC_API_KEY or
-ANTHROPIC_API_KEY_PERSONAL is set. Run: uv run pytest -q -m live tests/test_llm*"""
+DME_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) is set. Run: uv run pytest -q -m live tests/test_llm*"""
 
 import time
 from datetime import datetime
