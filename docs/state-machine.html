@@ -714,7 +714,7 @@ const M = {
       ["DELIVERY_SCHEDULED", "OPEN", "supplier ghosted", { b: 62 }],
       ["OPEN", "BLOCKED_ON_HUMAN", "escalation", { b: 26, lo: [-6, 0], a: "end" }], ["BLOCKED_ON_HUMAN", "OPEN", "decision", { b: 26, lo: [6, 0], a: "start" }],
       ["BLOCKED_ON_HUMAN", "ABANDONED", "closed by human", {}],
-      ["DELIVERY_SCHEDULED", "PAUSED", "admitted", { lo: [6, 0], a: "start" }], ["PAUSED", "OPEN", "discharged", { lo: [0, -6] }]] },
+      ["DELIVERY_SCHEDULED", "PAUSED", "admitted", { lo: [6, 0], a: "start" }], ["PAUSED", "OPEN", "discharged", { lo: [0, -6] }], ["HANDOFF_READY", "BLOCKED_ON_HUMAN", "escalation", {}], ["DELIVERY_SCHEDULED", "BLOCKED_ON_HUMAN", "", {}]] },
   supplier: { w: 960, h: 316, nodes: [
       ["NOT_CONTACTED", 80, 46, "Not contacted"], ["CALLING", 260, 46, "Calling"], ["QUALIFIED", 460, 46, "Qualified", "ok"],
       ["COMMITTED", 660, 46, "Took referral", "ok"], ["CONFIRMED", 870, 46, "Has order, date set", "ok"],
@@ -726,7 +726,7 @@ const M = {
       ["CALLING", "DISQUALIFIED", "hard fail", {}], ["CALLING", "ESC_AMBIGUOUS", "no quote ×2", { lo: [-30, 0] }],
       ["QUALIFIED", "COMMITTED", "takes referral", { lo: [0, -8] }], ["COMMITTED", "CONFIRMED", "order + eligibility", { lo: [0, -8] }],
       ["COMMITTED", "DISQUALIFIED", "reconfirm fails", {}], ["COMMITTED", "ESC_ELIGIBILITY", "same/similar", { lo: [4, 30] }], ["CONFIRMED", "GHOSTED", "promised +1d", {}],
-      ["CONFIRMED", "DELIVERED", "POD", { lo: [6, 0], a: "start" }], ["GHOSTED", "ESC_EXHAUSTED", "none left", { lo: [6, 0], a: "start" }]] },
+      ["CONFIRMED", "DELIVERED", "POD", { lo: [6, 0], a: "start" }], ["GHOSTED", "ESC_EXHAUSTED", "none left", { lo: [6, 0], a: "start" }], ["QUALIFIED", "DISQUALIFIED", "no longer available", { lo: [6, 0], a: "start" }], ["ESC_AMBIGUOUS", "CALLING", "fact set", { b: 30 }], ["ESC_ELIGIBILITY", "COMMITTED", "proceed", { b: 30 }], ["ESC_EXHAUSTED", "GHOSTED", "widened", { b: 26, lo: [-6, 0], a: "end" }], ["UNREACHABLE", "NOT_CONTACTED", "widened", {}]] },
   order: { w: 1000, h: 316, nodes: [
       ["VERBAL_IN_CHART", 80, 46, "Verbal in chart"], ["REQUESTED", 250, 46, "Requested"], ["ACKNOWLEDGED", 420, 46, "Acknowledged"],
       ["RECEIVED", 590, 46, "Received"], ["VALIDATED", 760, 46, "Validated", "ok"],
@@ -742,7 +742,7 @@ const M = {
       ["CORRECTION_REQUESTED", "ESC_CLINICAL", "clinical change", { lo: [6, 0], a: "start" }],
       ["VALIDATED", "SENT_TO_SUPPLIER", "to committed", { lo: [6, 0], a: "start" }],
       ["SENT_TO_SUPPLIER", "DOCS_OK", "notes OK", { lo: [0, 20] }], ["DOCS_OK", "SENT_TO_SUPPLIER", "re-sent on ghost", { b: 30 }],
-      ["SENT_TO_SUPPLIER", "ESC_DOCS", "still short", { lo: [6, 0], a: "start" }]] },
+      ["SENT_TO_SUPPLIER", "ESC_DOCS", "still short", { lo: [6, 0], a: "start" }], ["ESC_UNSIGNED", "REQUESTED", "retry via contact", { b: -170, lo: [-4, 0], a: "end" }], ["ESC_CLINICAL", "CORRECTION_REQUESTED", "K0001 confirmed", { b: 26, lo: [-6, 0], a: "end" }], ["ESC_DOCS", "SENT_TO_SUPPLIER", "re-visit done", { b: 26, lo: [-6, 0], a: "end" }]] },
   patient: { w: 800, h: 316, nodes: [
       ["NOT_CONTACTED", 90, 46, "Not contacted"], ["INFORMED", 290, 46, "Informed"], ["WINDOW_CONFIRMED", 500, 46, "Supplier + window OK", "ok"],
       ["DELIVERY_VERIFIED", 710, 46, "Delivery verified", "ok"], ["NO_ANSWER", 90, 160, "No answer", "warn"],
@@ -753,7 +753,7 @@ const M = {
       ["INFORMED", "WINDOW_CONFIRMED", "consents", { lo: [0, 20] }], ["WINDOW_CONFIRMED", "INFORMED", "missed or slipped", { b: 30 }],
       ["WINDOW_CONFIRMED", "DELIVERY_VERIFIED", "post-delivery call", { lo: [0, 20] }],
       ["INFORMED", "ESC_COST", "cost concern", { lo: [-6, 0], a: "end" }], ["ESC_COST", "INFORMED", "human: proceed", { b: 34, lo: [4, 0], a: "start" }],
-      ["INFORMED", "ESC_DECLINES", "declines", {}]] }
+      ["INFORMED", "ESC_DECLINES", "declines", {}], ["ESC_UNREACHABLE", "INFORMED", "reached", {}], ["ESC_DECLINES", "INFORMED", "proceed", { b: 30 }]] }
 };
 const NW = 136, NH = 32;
 const SVGNS = "http://www.w3.org/2000/svg";

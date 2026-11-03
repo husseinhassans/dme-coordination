@@ -184,7 +184,9 @@ class OfficeFaxDesk(Protocol):
 class CallRunner(Protocol):
     """Implemented by dme.llm. The engine calls this and gets a finished record."""
 
-    async def run(self, goal: CallGoal, party: Party) -> CallRecord: ...
+    async def run(self, goal: CallGoal, party: Party, *, call_id: str | None = None) -> CallRecord:
+        """The engine generates call_id, emits call_started with it, then passes it here
+        so live utterance/facts hooks and human-seat ringing share the same id."""
 
     async def read_document(self, text: str, facts: list[FactSpec]) -> dict[str, Fact]: ...
 
