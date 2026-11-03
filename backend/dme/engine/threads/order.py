@@ -185,11 +185,11 @@ class OrderThread:
         if self.order_state == "ESC_UNSIGNED":
             return
         self._move("order", "order", "RECEIVED", tx)
-        v = rules.validate_order(facts, self.patient.visit_date)
+        v = rules.validate_order(self._with_notes_on_file(facts), self.patient.visit_date)
 
         if v.passed:
             self._move("order", "order", "VALIDATED", tx)
-            self._order_text = text
+            self._order_text = self._documents_on_file()
             detail = ("6 of 6 order elements. HCPCS K0001. Quantity 1. Dated on or after the visit. VALIDATED. "
                       "The pre-screen finds no gaps.")
             target = self._committed_supplier()
@@ -299,11 +299,30 @@ class OrderThread:
                               tx, fax_id=doc.id)
         return True
 
+    def _with_notes_on_file(self, facts: dict) -> dict:
+        """D8: the supplier gets every document the office sent (original note + any
+        addendum), so a criterion documented in an earlier note still counts. Order
+        fields (code, signature, date) come only from the newest document."""
+        merged = dict(facts)
+        for prev in self.faxes.values():
+            if prev.direction != "inbound":
+                continue
+            for key, fact in prev.facts.items():
+                if key.startswith("crit_") and rules.known(prev.facts, key) is True \
+                        and rules.known(merged, key) is not True:
+                    merged[key] = fact
+        return merged
+
+    def _documents_on_file(self) -> str:
+        """Everything the office sent, newest first: what the supplier receives."""
+        inbound = [f.text for f in self.faxes.values() if f.direction == "inbound"]
+        return "\n\n----- earlier document -----\n\n".join(reversed(inbound))
+
     async def _receive_new_note(self, text: str, fax_id: str, facts: dict) -> None:
         """After DOCS_INSUFFICIENT → "re-visit booked": the new note/order goes to the
         same supplier for re-review. SENT_TO_SUPPLIER has no edge back to RECEIVED, so
         the validator runs without a state change."""
-        v = rules.validate_order(facts, self.patient.visit_date)
+        v = rules.validate_order(self._with_notes_on_file(facts), self.patient.visit_date)
         sid = self._order_supplier
         if not v.passed or sid is None:
             await self._event("order", "fax", "New documentation still has problems",
@@ -311,7 +330,7 @@ class OrderThread:
             await self._fax_request(self._order_request_text(correction=v.problems))
             return
         self._awaiting_new_note = False
-        self._order_text = text
+        self._order_text = self._documents_on_file()
         doc = await self._send_fax(f"{self._name(sid)} {self.suppliers[sid].supplier.phone}",
                                    f"Updated documentation for {self.patient.name} (MBI {self.patient.mbi}).\n\n{text}")
         self._clarified.discard(f"{sid}:confirm")

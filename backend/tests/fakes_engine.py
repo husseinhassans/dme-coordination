@@ -137,17 +137,14 @@ DOC1 = ("STANDARD WRITTEN ORDER\nPatient: Eleanor Martinez   MBI: 1EG4-TE5-MK73\
         "VISIT NOTE 10/30/2026 (excerpt)\n"
         "Gait: unable to walk to bathroom without stopping to rest; near-fall at home 10/2.\n"
         "Plan: standard wheelchair for daily use in apartment. Patient agrees. Daughter assists with transfers.")
-# The corrected order is sent with the original note and the addendum.
-DOC2 = ("STANDARD WRITTEN ORDER (corrected)\nPatient: Eleanor Martinez   MBI: 1EG4-TE5-MK73\n"
-        "Item: Standard wheelchair   HCPCS: K0001   Qty: 1\nOrdering provider: Sarah Chen, MD   NPI: 1234567893\n"
-        "Date: 11/06/2026\nSignature: /s/ Sarah Chen, MD (electronically signed)\n\n"
-        "VISIT NOTE 10/30/2026 (excerpt)\n"
-        "Gait: unable to walk to bathroom without stopping to rest; near-fall at home 10/2.\n"
-        "Plan: standard wheelchair for daily use in apartment. Patient agrees. Daughter assists with transfers.\n\n"
-        "ADDENDUM 11/06/2026 to visit of 10/30/2026\n"
-        "At the 10/30 visit, patient could not safely reach the bathroom using her walker because of fatigue and "
-        "poor balance. She lives in an elevator building and reports the doorways in her apartment are wide enough "
-        "for a wheelchair.\n/s/ Sarah Chen, MD")
+# The corrected order is the real one the autopilot office sends: order + addendum only.
+# Criteria A, D, E and F/G live in DOC1's note, so the engine must combine documents (D8).
+from dme.llm.personas import DOC2  # noqa: E402
+
+# A complete first-time order: correct code, and a note that covers every criterion.
+FULL_ORDER = DOC1.replace("HCPCS: K0003", "HCPCS: K0001").replace("Date: 11/04/2026", "Date: 11/06/2026") + (
+    "\nPatient could not safely reach the bathroom using her walker because of fatigue and poor balance. "
+    "She reports the doorways in her apartment are wide enough for a wheelchair.")
 
 _COMMON = {
     "beneficiary": ("Eleanor Martinez", "Patient: Eleanor Martinez"),

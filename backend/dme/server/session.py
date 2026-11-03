@@ -23,6 +23,7 @@ log = logging.getLogger("dme.session")
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
 PARTY_NAMES = {"office": "Sunrise Family Medicine", "patient": "Eleanor Martinez"}
+MAX_CALLS_PER_RUN = 60   # cost guard: the demo run needs ~25; a loop gets paused, not billed forever
 
 
 def eleanor() -> Patient:
@@ -60,6 +61,8 @@ class Session:
     def _build(self) -> None:
         self.inbox.cancel_all()
         self._calls_by_party.clear()
+        self._call_count = 0
+        self._auto_decided: dict[str, int] = {}
         self.directory = load_directory()
         self._names = {s.id: s.name for s in self.directory}
         llm = AnthropicLLM()
@@ -90,6 +93,12 @@ class Session:
         if msg.get("type") == "call_started":
             self._calls_by_party[(msg.get("party_kind"), msg.get("party_id"))] = msg.get("call_id")
             msg["seat"] = self.parties.seat(msg.get("party_kind"))
+            self._call_count += 1
+            if self._call_count == MAX_CALLS_PER_RUN:
+                self.engine.pause()
+                await self._broadcast({"type": "error", "message": (
+                    f"Paused after {MAX_CALLS_PER_RUN} calls. A normal run needs about 25, so something is "
+                    "looping. Press Resume to continue anyway.")})
         if msg.get("type") == "snapshot" and isinstance(msg.get("case"), dict):
             msg["case"]["seats"] = dict(self.seats)
         await self._broadcast(msg)
@@ -117,8 +126,14 @@ class Session:
     def _scripted_decision(self, esc: Escalation) -> tuple[str, str | None, dict[str, str]]:
         """What the autopilot advocate does: the run's cost conversation (spec §11),
         or the first allowed answer for any other code."""
-        prefer = "Pause" if esc.code == "SUPPLIERS_EXHAUSTED" else "QMB"   # widen with no one left would loop
-        option = next((o for o in esc.options if prefer in o), esc.options[0])
+        # Never give the same non-final answer twice: a second escalation of the same kind
+        # means the first answer didn't work, so the autopilot advocate pauses the case.
+        seen = self._auto_decided.get(esc.code, 0)
+        self._auto_decided[esc.code] = seen + 1
+        prefer = "Pause" if seen or esc.code == "SUPPLIERS_EXHAUSTED" else "QMB"
+        option = next((o for o in esc.options if prefer.lower() in o.lower()),
+                      next((o for o in esc.options if "close" in o.lower()), esc.options[0]) if prefer == "Pause"
+                      else esc.options[0])
         note = ("Called Eleanor for 25 minutes. Walked through the $72 total; the surgery bill is separate. "
                 "Income is about $1,250 a month, so she likely qualifies for QMB. Started the application. "
                 "She wants the chair and approves the next supplier.") if esc.code == "PATIENT_COST_CONCERN" else None

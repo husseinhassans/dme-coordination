@@ -10,6 +10,7 @@ import asyncio
 from dme.engine.geo import load_directory
 from dme.engine.orchestrator import Engine
 from tests.fakes_engine import (
+    FULL_ORDER,
     DOC1, DOC2, NO_ANSWER, Collector, ScriptedAdvocate, ScriptedCallRunner, ScriptedFaxDesk, ScriptedParties, Turn,
     demo_script, eleanor,
 )
@@ -147,8 +148,8 @@ class ValidAtGoodFax(ScriptedFaxDesk):
     """Returns the good order as soon as a request reaches the right fax."""
     async def next_signed_order(self):
         if not self.sent and self._got("ORDER REQUEST"):
-            self.sent.append(DOC2)
-            return DOC2
+            self.sent.append(FULL_ORDER)
+            return FULL_ORDER
         return None
 
 
