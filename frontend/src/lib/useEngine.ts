@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { CallOutcome, CaseSnapshot, ClientMsg, Escalation, Fact, PartyKind, SeatKey, SeatMode, ServerMsg, Utterance } from "../types";
 import { MockEngine } from "../mock/MockEngine";
-import { openWs, wantsMock, wsUrl, type ConnStatus, type Transport } from "./transport";
+import { ReplayEngine, type ReplayMeta } from "./replay";
+import { openWs, wantsMock, wantsReplay, wsUrl, type ConnStatus, type Transport } from "./transport";
+
+export type { ReplayMeta } from "./replay";
+export { wantsReplay } from "./transport";
+
+/** Which engine feeds the UI. "live" falls back to "mock" if the socket never opens. */
+export type EngineSource = "live" | "replay" | "mock";
 
 export interface LiveCall {
   call_id: string;
@@ -40,17 +47,21 @@ export interface EngineState {
   escalations: Record<string, Escalation>;
   toasts: Toast[];
   toastSeq: number;
+  /** Set once a replay file has loaded; null for live / mock. */
+  replayMeta: ReplayMeta | null;
 }
 
 type Action =
   | { kind: "msg"; msg: ServerMsg }
   | { kind: "status"; status: ConnStatus }
+  | { kind: "reset"; status: ConnStatus }
+  | { kind: "replayMeta"; meta: ReplayMeta }
   | { kind: "dismiss"; id: number }
   | { kind: "faxSent" }
   | { kind: "seatLocal"; seat: SeatKey; mode: SeatMode }
   | { kind: "turnTaken"; call_id: string };
 
-const init: EngineState = { status: "connecting", snapshot: null, calls: {}, seq: 0, faxRequest: null, escalations: {}, toasts: [], toastSeq: 0 };
+const init: EngineState = { status: "connecting", snapshot: null, calls: {}, seq: 0, faxRequest: null, escalations: {}, toasts: [], toastSeq: 0, replayMeta: null };
 
 function toast(s: EngineState, t: Omit<Toast, "id">): EngineState {
   const id = s.toastSeq + 1;
@@ -66,6 +77,8 @@ function patchCall(s: EngineState, id: string, f: (c: LiveCall) => LiveCall): En
 function reducer(s: EngineState, a: Action): EngineState {
   switch (a.kind) {
     case "status": return { ...s, status: a.status };
+    case "reset": return { ...init, status: a.status };
+    case "replayMeta": return { ...s, replayMeta: a.meta };
     case "dismiss": return { ...s, toasts: s.toasts.filter((t) => t.id !== a.id) };
     case "faxSent": return { ...s, faxRequest: null };
     case "turnTaken": return patchCall(s, a.call_id, (c) => ({ ...c, yourTurn: false }));
@@ -134,22 +147,35 @@ function reducer(s: EngineState, a: Action): EngineState {
 export function useEngine() {
   const [state, dispatch] = useReducer(reducer, init);
   const tRef = useRef<Transport | null>(null);
-  const mockRef = useRef(false);
+  /** bumped on every source switch; callbacks from an older transport are dropped */
+  const genRef = useRef(0);
+
+  const switchSource = useCallback((src: EngineSource) => {
+    tRef.current?.close();
+    tRef.current = null;
+    const gen = ++genRef.current;
+    const current = () => gen === genRef.current;
+    const onMsg = (m: ServerMsg) => { if (current()) dispatch({ kind: "msg", msg: m }); };
+    const startMock = () => {
+      if (!current()) return;
+      tRef.current?.close();
+      dispatch({ kind: "reset", status: "mock" });
+      tRef.current = new MockEngine(onMsg);
+    };
+    if (src === "mock") startMock();
+    else if (src === "replay") {
+      dispatch({ kind: "reset", status: "replay" });
+      tRef.current = new ReplayEngine(onMsg, undefined, (meta) => { if (current()) dispatch({ kind: "replayMeta", meta }); });
+    } else {
+      dispatch({ kind: "reset", status: "connecting" });
+      tRef.current = openWs(wsUrl(), onMsg, (st) => { if (current()) dispatch({ kind: "status", status: st }); }, startMock);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const onMsg = (m: ServerMsg) => { if (!cancelled) dispatch({ kind: "msg", msg: m }); };
-    const startMock = () => {
-      if (cancelled) return;
-      tRef.current?.close();
-      mockRef.current = true;
-      tRef.current = new MockEngine(onMsg);
-      dispatch({ kind: "status", status: "mock" });
-    };
-    if (wantsMock()) startMock();
-    else tRef.current = openWs(wsUrl(), onMsg, (st) => dispatch({ kind: "status", status: st }), startMock);
-    return () => { cancelled = true; tRef.current?.close(); };
-  }, []);
+    switchSource(wantsMock() ? "mock" : wantsReplay() ? "replay" : "live");
+    return () => { genRef.current++; tRef.current?.close(); tRef.current = null; };
+  }, [switchSource]);
 
   const send = useCallback((m: ClientMsg) => tRef.current?.send(m), []);
 
@@ -168,7 +194,9 @@ export function useEngine() {
     decide: (escalation_id: string, option: string, note?: string, fields?: Record<string, string>) =>
       send({ type: "decide", escalation_id, option, ...(note ? { note } : {}), ...(fields && Object.keys(fields).length ? { fields } : {}) }),
     dismissToast: (id: number) => dispatch({ kind: "dismiss", id }),
-  }), [send]);
+    /** Switch engine: closes the current transport, resets state to init, opens the new one. */
+    useSource: switchSource,
+  }), [send, switchSource]);
 
   return { state, actions };
 }

@@ -1,5 +1,9 @@
 /** @type {import('tailwindcss').Config} */
-const v = (name) => `var(--${name})`;
+// CSS-variable colors that still support opacity modifiers (border-human/40, bg-accent/70).
+const v = (name) => ({ opacityValue }) =>
+  opacityValue === undefined || opacityValue === "1" || opacityValue === 1
+    ? `var(--${name})`
+    : `color-mix(in srgb, var(--${name}) calc(${opacityValue} * 100%), transparent)`;
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {

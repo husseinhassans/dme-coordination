@@ -5,7 +5,8 @@ export interface Transport {
   close(): void;
 }
 
-export type ConnStatus = "connecting" | "open" | "closed" | "mock";
+/** "connecting" / "open" / "closed" = live socket; "mock" = scripted MockEngine; "replay" = recorded run. */
+export type ConnStatus = "connecting" | "open" | "closed" | "mock" | "replay";
 
 export function wsUrl(): string {
   const env = import.meta.env.VITE_WS_URL as string | undefined;
@@ -15,6 +16,10 @@ export function wsUrl(): string {
 
 export function wantsMock(): boolean {
   return new URLSearchParams(window.location.search).get("mock") === "1";
+}
+
+export function wantsReplay(): boolean {
+  return new URLSearchParams(window.location.search).get("replay") === "1";
 }
 
 /**
