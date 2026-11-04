@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Maximize2, X } from "lucide-react";
 import type { CaseSnapshot, MachineName, TimelineEvent } from "../../types";
 import { deriveMachines, MACHINE_TITLE } from "../../lib/machines";
 import { HeardPanel, RulesCard, ThesisStrip, type HeardSource } from "../RightColumn";
@@ -11,12 +12,14 @@ type Tab = "decision" | "machines" | "suppliers";
 /** The reviewer's view: facts with quotes, the rule that fired, and the state machines. */
 export function HowDrawer({ open, onClose, snap, ev, heard, waiting }: { open: boolean; onClose: () => void; snap: CaseSnapshot | null; ev: TimelineEvent | null; heard: HeardSource | null; waiting: boolean }) {
   const [tab, setTab] = useState<Tab>("decision");
+  // The diagrams are drawn ~1000px wide; in the drawer they shrink to half. Click one to see it full size.
+  const [zoom, setZoom] = useState<MachineName | null>(null);
   useEffect(() => {
     if (!open) return;
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { if (zoom) setZoom(null); else onClose(); } };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  }, [open, onClose]);
+  }, [open, onClose, zoom]);
   if (!open) return null;
   const views = deriveMachines(snap);
   return (
@@ -42,13 +45,27 @@ export function HowDrawer({ open, onClose, snap, ev, heard, waiting }: { open: b
           </>
         )}
         {tab === "machines" && (["case", "supplier", "order", "patient"] as MachineName[]).map((m) => (
-          <figure key={m} className="card p-3">
-            <figcaption className="mb-1 text-[13.5px] font-semibold">{MACHINE_TITLE[m]}</figcaption>
+          <figure key={m} className="card cursor-zoom-in p-3 hover:border-accent" onClick={() => setZoom(m)} title="Click to enlarge">
+            <figcaption className="mb-1 flex items-center text-[13.5px] font-semibold">{MACHINE_TITLE[m]}<span className="ml-auto flex items-center gap-1 text-[11.5px] font-normal text-muted"><Maximize2 size={12} />Enlarge</span></figcaption>
             <StateMachine machine={m} view={views[m]} />
           </figure>
         ))}
         {tab === "suppliers" && snap && <SupplierBoard snap={snap} callingId={snap.suppliers.find((s) => s.state === "CALLING")?.supplier.id ?? null} />}
       </div>
+      {zoom && createPortal(
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/50 p-6" onClick={() => setZoom(null)}>
+          <div className="scroll-thin mx-auto flex max-h-full w-[min(1500px,96vw)] flex-col overflow-auto rounded-2xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center gap-2">
+              {(["case", "supplier", "order", "patient"] as MachineName[]).map((m) => (
+                <button key={m} onClick={() => setZoom(m)} className={`rounded-full border px-3 py-1 text-[13px] ${zoom === m ? "border-accent bg-accent text-surface" : "border-line text-muted hover:text-ink"}`}>{MACHINE_TITLE[m]}</button>
+              ))}
+              <button className="btn btn-ghost ml-auto px-1.5" onClick={() => setZoom(null)} aria-label="Close"><X size={20} /></button>
+            </div>
+            <div className="min-w-[1100px]"><StateMachine machine={zoom} view={views[zoom]} /></div>
+            <p className="mt-2 text-[12px] text-muted">Blue: where the case is now. Bold outline: states it has been through. Blue arrows: transitions taken. Dashed: hand-offs to a person.</p>
+          </div>
+        </div>, document.body
+      )}
     </aside>
   );
 }
