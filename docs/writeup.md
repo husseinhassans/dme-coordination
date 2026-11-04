@@ -100,7 +100,8 @@ engine picks the next action ─► caller LLM speaks (brief + case file) ─►
   can't pick one from the UI.
 - **Rental-month oversight, repairs, appeals, Medicare Advantage, power mobility,
   multi-case scheduling, auth.**
-- **The 3-hour box.** I went well past it, using AI heavily as allowed. The core is the
+- **The 3-hour box.** My hands-on time fit inside it, but elapsed time didn't: AI agents
+  did most of the building across two sessions, and I directed and tested. The core is the
   engine plus the grounding layer (`backend/dme/engine`, `backend/dme/llm`). The UI,
   replay and read-aloud came after. With a strict 3 hours, I'd have shipped the engine
   with text calls in the terminal (`python -m dme.cli`).
