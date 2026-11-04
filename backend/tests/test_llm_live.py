@@ -110,3 +110,55 @@ async def test_live_read_doc1(llm):
     assert not facts["crit_B_walker_not_enough"].known       # D8 gap
     assert not facts["crit_C_home_access"].known             # D8 gap
     assert facts["crit_FG_propel_or_caregiver"].known        # "Daughter assists with transfers."
+
+
+# ------------------------------------------------- the case file (Nov 3 live-test fixes)
+
+class Eleanor:
+    seat = "auto"
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+
+    async def pick_up(self, goal):
+        return True
+
+    async def reply(self, transcript):
+        return self.lines.pop(0) if self.lines else None
+
+
+async def _switch_goal():
+    """The real 'approve the backup' goal, case file included, from a scripted engine run."""
+    from tests.fakes_engine import demo_script
+    from tests.test_engine_scenarios import run
+    engine = await run(demo_script())
+    return [g for _, g, _ in engine._runner.goals if g.purpose == "patient_consent"][-1].model_copy(
+        update={"max_turns": 4})
+
+
+def _line_after(rec, words):
+    i = next(i for i, u in enumerate(rec.transcript) if u.speaker == "party" and words in u.text)
+    return next(u.text for u in rec.transcript[i + 1:] if u.speaker == "engine")
+
+
+async def test_live_cost_question_is_answered_from_the_case_file(llm):
+    goal = await _switch_goal()
+    t0 = time.perf_counter()
+    rec = await LLMCallRunner(llm, now=lambda: T).run(goal, Eleanor(
+        ["hi this is eleanor", "okay. how much was it going to cost again?", "alright, thank you", "yes"]))
+    show(rec, llm, t0)
+    answer = _line_after(rec, "how much")
+    assert "6.85" in answer or "72" in answer, answer
+    assert "don't have" not in answer.casefold(), answer
+
+
+async def test_live_cost_worry_is_not_argued_with(llm):
+    goal = await _switch_goal()
+    t0 = time.perf_counter()
+    rec = await LLMCallRunner(llm, now=lambda: T).run(goal, Eleanor(
+        ["hi this is eleanor", "okay. but honestly I can't take on another bill every month.", "yes please"]))
+    show(rec, llm, t0)
+    answer = _line_after(rec, "another bill")
+    assert "$" not in answer and "dollar" not in answer.casefold(), answer
+    assert "call" in answer.casefold(), answer
+    assert rec.facts["cost_concern"].known and rec.facts["cost_concern"].value is True

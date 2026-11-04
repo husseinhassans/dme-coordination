@@ -26,7 +26,7 @@ class Speech {
   private queue: { text: string; role: Role }[] = [];
   private speaking = false;
   private waiters: (() => void)[] = [];
-  private calls = new Map<string, { kind: PartyKind; human: boolean }>();
+  private calls = new Map<string, { kind: PartyKind; human: boolean; name: string }>();
   private current: string | null = null;
   private voices: Partial<Record<Role, SpeechSynthesisVoice>> = {};
   private listeners = new Set<(on: boolean) => void>();
@@ -69,15 +69,27 @@ class Speech {
   }
 
   observe(m: ServerMsg) {
-    if (m.type === "call_started") this.calls.set(m.call_id, { kind: m.party_kind, human: m.seat === "human" });
-    else if (m.type === "ringing") this.calls.set(m.call_id, { kind: m.party_kind, human: true });
-    else if (m.type === "call_ended" && m.call_id === this.current) this.current = null;
+    if (m.type === "call_started") this.calls.set(m.call_id, { kind: m.party_kind, human: m.seat === "human", name: m.party_name });
+    else if (m.type === "ringing") this.calls.set(m.call_id, { kind: m.party_kind, human: true, name: m.party_name });
+    else if (m.type === "call_ended") {
+      if (m.call_id === this.current) this.current = null;
+      // A call nobody picked up has no lines; say so, or it passes by in silence.
+      const c = this.calls.get(m.call_id);
+      if (this.enabled && c && !this.current && (m.outcome === "no_answer" || m.outcome === "voicemail")) {
+        this.queue.push({ text: `Called ${c.name}. ${m.outcome === "voicemail" ? "Left a voicemail." : "No answer."}`, role: "engine" });
+        this.next();
+      }
+    }
     else if (m.type === "utterance" && this.enabled) {
       const c = this.calls.get(m.call_id);
       if (!c) return;
       if (this.current && this.current !== m.call_id) return; // one call at a time
       this.current = m.call_id;
-      if (m.speaker === "party" && c.human) return; // you typed it; don't read it back to you
+      if (m.speaker === "party" && c.human) {
+        // You typed a reply, so you've already read what came before it: skip the rest.
+        this.queue = []; if (this.speaking) window.speechSynthesis.cancel();
+        return;
+      }
       this.queue.push({ text: m.text, role: m.speaker === "engine" ? "engine" : c.kind });
       this.next();
     }
@@ -99,7 +111,9 @@ class Speech {
     const u = new SpeechSynthesisUtterance(item.text);
     const v = this.voices[item.role];
     if (v) { u.voice = v; u.lang = v.lang; }
-    u.rate = TUNE[item.role].rate; u.pitch = TUNE[item.role].pitch;
+    // Live runs don't wait for the voice, so speed up when lines pile up instead of falling behind.
+    const catchUp = 1 + Math.min(0.5, this.queue.length * 0.15);
+    u.rate = TUNE[item.role].rate * catchUp; u.pitch = TUNE[item.role].pitch;
     let done = false;
     const finish = () => { if (done) return; done = true; clearTimeout(guard); this.speaking = false; this.next(); };
     // Safety net: some browsers occasionally never fire onend.

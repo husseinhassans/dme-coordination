@@ -26,9 +26,11 @@ class SupplierThread:
 
     def _window_for(self, sid: str) -> str:
         facts = self.suppliers[sid].facts
-        for key in ("delivery_date", "earliest_delivery"):
-            if (v := self._f(facts, key)) is not None:
-                return str(v)
+        if (v := self._f(facts, "delivery_date")) is not None:
+            return str(v)                      # a date they committed to
+        if (v := self._f(facts, "earliest_delivery")) is not None:
+            # Only their earliest, not a promise: say so (they confirm once they have the order).
+            return f"as early as {v}, once they confirm the exact time"
         eta = self._f(facts, "delivery_eta_days")
         return f"within {eta} business days of the order" if eta else "as soon as the order is received"
 
@@ -466,11 +468,29 @@ class SupplierThread:
                        "(D5).")
             self.next_check["supplier"] = f"{self._name(backup)}, after Eleanor approves"
         await self._event("supplier", "timer", f"{s.supplier.name} marked GHOSTED", detail, tx)
+        await self._withdraw(sid)
         if backup:
             self._propose(backup, self._window_for(backup), timedelta(minutes=10), urgent=True)
         else:
             self._pump()
 
+
+    async def _withdraw(self, sid: str) -> None:
+        """Close the loop with a no-show: in writing, don't deliver and don't bill her.
+        They already hold her order, so this shares nothing new (D3)."""
+        name = self._name(sid)
+        self._withdrawn[sid] = self._clock.now
+        doc = await self._send_fax(
+            name,
+            f"To: {name}\nRe: wheelchair referral for {self.patient.name} (HCPCS {self.patient.hcpcs})\n\n"
+            "This referral is withdrawn because the promised delivery didn't happen and we couldn't reach you. "
+            "Please don't deliver, and don't submit a claim to Medicare or bill the patient for this order. "
+            "Call the care team if a chair was in fact delivered.",
+            thread="supplier")
+        await self._event("supplier", "fax", f"Referral withdrawn from {name}",
+                          "Told in writing not to deliver or bill her. Medicare pays a supplier only with a signed "
+                          "delivery ticket, so she can't be billed twice; this makes that explicit. If they "
+                          "answer that they did deliver, a person reviews it (D11).", fax_id=doc.id)
 
     def _supplier_by_ref(self, ref: str | None) -> str | None:
         """Accept a supplier id or (part of) its name, as typed by the advocate."""

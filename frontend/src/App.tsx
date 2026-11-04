@@ -128,7 +128,7 @@ export function App() {
         onSendFax={(t) => state.faxRequest && actions.sendFax(state.faxRequest.request_id, t)} />
 
       <Modal open={!!view && (view.kind === "fax" ? !!snap?.faxes[view.id] : !!viewed)} onClose={() => setView(null)} wide
-        title={view?.kind === "fax" ? (snap?.faxes[view.id]?.direction === "inbound" ? "Fax from Dr. Chen's office" : "Fax to Dr. Chen's office") : viewed ? `Call with ${viewed.party_name}` : ""}
+        title={view?.kind === "fax" ? (snap?.faxes[view.id]?.direction === "inbound" ? "Fax from Dr. Chen's office" : (/^[\d(+]/.test(snap?.faxes[view.id]?.to ?? "") ? "Fax to Dr. Chen's office" : `Fax to ${snap?.faxes[view.id]?.to}`)) : viewed ? `Call with ${viewed.party_name}` : ""}
         sub="Left: what was said. Right: the facts the model pulled out, each backed by the exact words. Rules decide from those facts only.">
         {view && snap && (
           <div className="grid h-[min(640px,70vh)] grid-cols-[minmax(0,1fr)_360px] gap-3">

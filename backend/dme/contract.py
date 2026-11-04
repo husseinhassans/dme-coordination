@@ -92,6 +92,7 @@ class FactSpec(BaseModel):
     type: Literal["bool", "int", "str", "date"]
     description: str   # what it means, written for the extraction model
     required: bool = True
+    ask: bool = True   # False: listen for it, never ask (e.g. a cost worry the caller mustn't plant)
 
 
 class Fact(BaseModel):
@@ -127,6 +128,9 @@ class CallGoal(BaseModel):
     facts: list[FactSpec]
     may_disclose: list[str] = Field(default_factory=list)   # PHI allowed on this call (D3)
     must_say: list[str] = Field(default_factory=list)       # e.g. exact cost numbers (rules-computed)
+    # The engine's record of the case, filtered for this party (D3). The caller answers
+    # questions from it; it is rendered from engine state, never written by a model.
+    case_file: list[str] = Field(default_factory=list)
     max_turns: int = 8
 
 
@@ -307,8 +311,12 @@ class CaseSnapshot(BaseModel):
 B, I, S = "bool", "int", "str"
 
 
-def _f(key: str, type_: str, desc: str, required: bool = True) -> FactSpec:
-    return FactSpec(key=key, type=type_, description=desc, required=required)  # type: ignore[arg-type]
+def _f(key: str, type_: str, desc: str, required: bool = True, ask: bool = True) -> FactSpec:
+    return FactSpec(key=key, type=type_, description=desc, required=required, ask=ask)  # type: ignore[arg-type]
+
+
+_COST_WORRY = ("She is worried about the cost, says she can't afford it, wants to stop over cost, or asks for "
+               "someone to call her about money. A plain question about the price, answered, is not a worry")
 
 
 CALL_PURPOSES: dict[str, list[FactSpec]] = {
@@ -362,18 +370,18 @@ CALL_PURPOSES: dict[str, list[FactSpec]] = {
     "patient_consent": [
         _f("consents_to_supplier", B, "She agrees to the named supplier providing the chair"),
         _f("window_ok", B, "She agrees to the delivery window"),
-        _f("cost_concern", B, "She says she can't afford it, is confused about cost, or wants to stop over cost", required=False),
-        _f("declines", B, "She declines the chair for a non-cost reason", required=False),
+        _f("cost_concern", B, _COST_WORRY, required=False, ask=False),
+        _f("declines", B, "She declines the chair for a non-cost reason", required=False, ask=False),
         _f("caregiver_present", S, "Someone who will be there / helps her", required=False),
     ],
     "patient_delivery_check": [
         _f("delivered", B, "She says the chair arrived"),
-        _f("cost_concern", B, "She raises a cost worry", required=False),
+        _f("cost_concern", B, _COST_WORRY, required=False, ask=False),
     ],
 }
 
 # Always extracted on every call in addition to the purpose facts (D-SAFETY).
-SAFETY_FACT = _f("safety_concern", B, "The person mentions a fall, an injury, or acute distress", required=False)
+SAFETY_FACT = _f("safety_concern", B, "The person mentions a fall, an injury, or acute distress", required=False, ask=False)
 
 # Order document fields (fax → facts). Quotes come from the document text.
 ORDER_DOC_FACTS: list[FactSpec] = [

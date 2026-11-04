@@ -199,7 +199,7 @@ export class ReplayEngine implements Transport {
     // Hold at a hand-off to a person so the viewer actually sees it; Resume continues.
     if (m?.type === "escalation" && !m.escalation.decision && m.escalation.code !== "SAFETY_CONCERN") { this.pause(); return; }
     if (!m || this.finished) return;
-    if (m.type === "utterance" && speech.enabled) {
+    if (speech.enabled && (m.type === "utterance" || (m.type === "call_ended" && m.outcome !== "answered" && m.outcome !== "hung_up"))) {
       // Read aloud: wait for the voice to finish, then a short beat, whatever the speed.
       const gen = this.idx;
       speech.idle().then(() => { if (!this.closed && !this.paused && !this.finished && this.idx === gen && this.timer === null) this.timer = setTimeout(() => this.tick(), 350); });

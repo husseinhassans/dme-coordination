@@ -32,6 +32,7 @@ from dme.contract import (
 )
 from dme.engine import calendar as cal
 from dme.engine import machines, rules
+from dme.engine.casefile import CaseFileMixin
 from dme.engine.escalations import EscalationsMixin
 from dme.engine.policy import (  # §10 timer values
     INTAKE_OFFICE_FAX, CALL_MINUTES, MAX_CORRECTION_LOOPS,
@@ -41,7 +42,7 @@ from dme.engine.threads.patient import PatientThread
 from dme.engine.threads.supplier import SupplierThread
 
 
-class Engine(EscalationsMixin, PatientThread, SupplierThread, OrderThread):
+class Engine(EscalationsMixin, CaseFileMixin, PatientThread, SupplierThread, OrderThread):
     """Public API per dme.contract (Engine block). Extra public attribute:
     `current_call_id`, the id of the call in progress (None between calls), so a
     human seat can key its prompts to the call the engine announced."""
@@ -96,6 +97,7 @@ class Engine(EscalationsMixin, PatientThread, SupplierThread, OrderThread):
         self._post_miss_misses: dict[str, int] = {}
         self._confirm_misses: dict[str, int] = {}
         self._ranked_once = False
+        self._withdrawn: dict[str, datetime] = {}      # no-show suppliers told in writing not to bill
 
         # Order thread
         self._office_fax = INTAKE_OFFICE_FAX
@@ -261,7 +263,8 @@ class Engine(EscalationsMixin, PatientThread, SupplierThread, OrderThread):
         """Build the CallGoal from CALL_PURPOSES, run it through the call runner, store it."""
         goal = CallGoal(purpose=purpose, thread=thread, party_kind=kind, party_id=party_id,
                         party_name=party_name, brief=brief, facts=list(CALL_PURPOSES[purpose]),
-                        may_disclose=list(may_disclose or []), must_say=list(must_say or []))
+                        may_disclose=list(may_disclose or []), must_say=list(must_say or []),
+                        case_file=self._case_file(kind, party_id, list(may_disclose or [])))
         call_id = self._id("call")
         self.current_call_id = call_id
         await self._emit({"type": "call_started", "call_id": call_id, "party_kind": kind,

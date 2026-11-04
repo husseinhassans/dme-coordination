@@ -132,8 +132,7 @@ class PatientThread:
         brief = (f"Ask {self.patient.name} whether {name} may provide her wheelchair and whether the "
                  f"delivery window {window_text} works (D10). "
                  + ("The previous supplier didn't follow through; apologise briefly. " if switching else "")
-                 + "Don't persuade. If she raises cost or wants to stop, ask only whether someone from "
-                   "her care team may call her.")
+                 + "Don't persuade. If she asks about cost, answer from the case file.")
         rec = await self._patient_call("patient_consent", brief, urgent=urgent,
                                        may_disclose=["patient name", "supplier name", "delivery window"],
                                        must_say=[name, window_text])
@@ -187,10 +186,13 @@ class PatientThread:
         else:
             await self._ambiguous("patient", missing, rec.id, kind="consent", sid=sid)
 
-    async def _escalate_cost(self, rec: CallRecord, sid: str, window_text: str, tx: list[Transition]) -> None:
+    async def _escalate_cost(self, rec: CallRecord, sid: str | None, window_text: str | None,
+                             tx: list[Transition]) -> None:
         numbers = rules.cost_rows() + rules.qmb_rows()
         context = [f"She said: {self._quote(rec, 'cost_concern')}",
-                   f"{self._name(sid)} is ready: {window_text}.",
+                   *([f"{self._name(sid)} is ready: {window_text}."] if sid else []),
+                   *[f"{self._name(w)} never delivered and was told in writing not to deliver or bill. Medicare "
+                     "pays only with a signed delivery ticket, so she won't pay twice." for w in self._withdrawn],
                    ("The order is validated and reusable; no new paperwork is needed." if self._order_text
                     else f"The order is {self.order_state.replace('_', ' ').lower()}.")]
         await self._escalate(
@@ -202,7 +204,10 @@ class PatientThread:
             numbers=numbers, context=context, call_ids=[rec.id], sid=sid)
 
     async def _repropose(self) -> None:
-        sid = self._confirmed_supplier() or self._best_backup()
+        sid = self._confirmed_supplier()
+        if sid and sid in self._promised and self._promised[sid][1] < self._clock.now:
+            sid = None                         # it already missed its window: don't offer it again
+        sid = sid or self._best_backup()
         if sid is None or self.patient_state != "INFORMED":
             return
         self._propose(sid, self._window_for(sid), timedelta(0))
@@ -266,4 +271,9 @@ class PatientThread:
                           f"INFORMED. Check with the supplier now. The ghost threshold is {fmt_time(ghost)}.",
                           tx, call_id=rec.id)
         self._in(timedelta(minutes=5), lambda: self._supplier_delivery_check(sid), f"missed delivery {sid}")
+        if self._f(rec, "cost_concern") is True:
+            # Same rule as the consent call: a cost worry goes to a person, whichever call it comes up on.
+            tx = []
+            self._move("patient", "patient", "ESC_COST", tx)
+            await self._escalate_cost(rec, None, None, tx)
 
