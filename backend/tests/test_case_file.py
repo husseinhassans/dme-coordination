@@ -77,3 +77,23 @@ def test_caller_sees_the_case_file_and_never_plants_a_cost_worry():
     assert "Case file" in block and "about $6.85" in block
     cost_line = next(line for line in block.splitlines() if "worried about the cost" in line)
     assert "never ask" in cost_line and "STILL NEEDED" not in cost_line
+
+
+async def test_order_moves_on_when_the_committed_supplier_stops_answering():
+    """Nov 4 live run: Lincoln Park held the order, gave no delivery date, then went silent.
+    Prairie State took the referral but the order never moved, so the engine reconfirmed
+    with Prairie State weekly forever. The order must follow the referral (D5)."""
+    from tests.fakes_engine import NO_ANSWER
+    script = demo_script()
+    script[("supplier_confirm", "lp")] = [Turn(
+        says=["Got the order. Eligibility's clean. Note covers it. I'll call you with a day."],
+        facts={"order_received": (True, "Got the order."), "eligibility_clean": (True, "Eligibility's clean."),
+               "docs_sufficient": (True, "Note covers it.")})] + [NO_ANSWER] * 5
+    script[("supplier_delivery_check", "lp")] = []
+    script[("patient_delivery_check", "patient")] = [
+        Turn(says=["It's here. The driver showed Rosa how to fold it."], facts={"delivered": (True, "It's here.")})]
+    engine = await run(script, stop_when_unscripted=True)
+    assert engine.suppliers["lp"].state == "DISQUALIFIED" and "lp" in engine._withdrawn
+    assert any(f.to.startswith("Prairie State") and "Signed order" in f.text for f in engine.faxes.values())
+    assert len(goals(engine, "supplier_reconfirm", "ps")) <= 2, "no weekly reconfirm loop"
+    assert engine.case_state == "CLOSED"

@@ -191,7 +191,7 @@ class PatientThread:
         numbers = rules.cost_rows() + rules.qmb_rows()
         context = [f"She said: {self._quote(rec, 'cost_concern')}",
                    *([f"{self._name(sid)} is ready: {window_text}."] if sid else []),
-                   *[f"{self._name(w)} never delivered and was told in writing not to deliver or bill. Medicare "
+                   *[f"{self._name(w)} was told in writing not to deliver or bill. Medicare "
                      "pays only with a signed delivery ticket, so she won't pay twice." for w in self._withdrawn],
                    ("The order is validated and reusable; no new paperwork is needed." if self._order_text
                     else f"The order is {self.order_state.replace('_', ' ').lower()}.")]

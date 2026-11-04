@@ -281,7 +281,11 @@ class OrderThread:
         """Send the validated order to `sid` if D3 allows: it must be the committed
         supplier, and once any supplier has been named to her, she must have approved
         this one (D10). Returns True if sent."""
-        if self.order_state not in ("VALIDATED", "DOCS_OK") or self._order_text is None:
+        holder = self._order_supplier
+        # The order may also move on from a supplier that held it and then dropped out (D5).
+        moving_on = (self.order_state == "SENT_TO_SUPPLIER" and holder is not None and holder != sid
+                     and self.suppliers[holder].state in ("DISQUALIFIED", "GHOSTED"))
+        if (self.order_state not in ("VALIDATED", "DOCS_OK") and not moving_on) or self._order_text is None:
             return False
         if self.suppliers[sid].state != "COMMITTED" or self._order_supplier == sid:
             return False
@@ -290,7 +294,8 @@ class OrderThread:
         doc = await self._send_fax(f"{self._name(sid)} {self.suppliers[sid].supplier.phone}",
                                    f"Signed order + visit note + MBI for {self.patient.name} "
                                    f"(MBI {self.patient.mbi}).\n\n{self._order_text}")
-        self._move("order", "order", "SENT_TO_SUPPLIER", tx)
+        if self.order_state != "SENT_TO_SUPPLIER":
+            self._move("order", "order", "SENT_TO_SUPPLIER", tx)
         self._order_supplier = sid
         self.next_check["order"] = f"waiting for {self._name(sid)}'s review"
         self._in(timedelta(minutes=25), lambda: self._supplier_confirm(sid), f"confirm {sid}")

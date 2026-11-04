@@ -107,7 +107,8 @@ class CaseFileMixin:
     def _supplier_story(self, for_patient: bool) -> list[str]:
         lines = []
         for sid, when in self._withdrawn.items():
-            lines.append(f"{self._name(sid)} didn't deliver as promised. On {fmt_day(when)} we told them in writing "
+            what = "didn't deliver as promised" if self.suppliers[sid].state == "GHOSTED" else "stopped answering us"
+            lines.append(f"{self._name(sid)} {what}. On {fmt_day(when)} we told them in writing "
                          "not to deliver and not to bill her. She owes them nothing.")
         if self._consented:
             lines.append(f"She approved {self._name(self._consented)}, delivering {self._patient_window_text}.")
