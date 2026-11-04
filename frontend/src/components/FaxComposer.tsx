@@ -42,8 +42,13 @@ const MISTAKES: Mistake[] = [
     undo: (t) => t.replace(/Qty:\s*\d+/, "Qty: 1") },
 ];
 
+/** Drafts by request, so a call that rings mid-edit doesn't throw your edits away. */
+const drafts = new Map<string, string>();
+
 export function FaxComposer({ req, onSend }: { req: FaxRequest; onSend: (text: string) => void }) {
-  const [text, setText] = useState(req.prefill);
+  const [text, setTextRaw] = useState(() => drafts.get(req.request_id) ?? req.prefill);
+  const setText = (next: string | ((t: string) => string)) =>
+    setTextRaw((t) => { const v = typeof next === "function" ? next(t) : next; drafts.set(req.request_id, v); return v; });
   const [showReq, setShowReq] = useState(false);
   const state = useMemo(() => MISTAKES.map((m) => ({ m, on: m.planted(text) && !m.planted(req.prefill) })), [text, req.prefill]);
   const planted = state.filter((s) => s.on).length;

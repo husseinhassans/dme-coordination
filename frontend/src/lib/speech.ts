@@ -68,6 +68,12 @@ class Speech {
     this.flush();
   }
 
+  /** Stop the current line and drop what's queued (the person has already read it). */
+  interrupt() {
+    this.queue = [];
+    if (this.speaking && this.supported) window.speechSynthesis.cancel();
+  }
+
   observe(m: ServerMsg) {
     if (m.type === "call_started") this.calls.set(m.call_id, { kind: m.party_kind, human: m.seat === "human", name: m.party_name });
     else if (m.type === "ringing") this.calls.set(m.call_id, { kind: m.party_kind, human: true, name: m.party_name });

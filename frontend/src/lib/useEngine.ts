@@ -157,11 +157,40 @@ export function useEngine() {
     const gen = ++genRef.current;
     const current = () => gen === genRef.current;
     speech.reset();
-    const onMsg = (m: ServerMsg) => {
-      if (!current()) return;
+    const deliver = (m: ServerMsg) => {
       if (m.type === "snapshot" && m.case.events.length === 0) speech.reset(); // a (re)start
       speech.observe(m);
       dispatch({ kind: "msg", msg: m });
+    };
+    // Live runs: when reading aloud, hold the screen to the voice. Messages are shown in
+    // order, and the next one waits until the line before it has been spoken, so a new
+    // call or fax never pops up while the last call's goodbye is still being read. The
+    // engine keeps working meanwhile (rings wait 90s), so the backlog is a few seconds.
+    const pending: ServerMsg[] = [];
+    let draining = false;
+    let justEnded = false;
+    const drain = async () => {
+      if (draining) return;
+      draining = true;
+      while (pending.length && current()) {
+        const m = pending[0];
+        if (speech.enabled) {
+          await speech.idle();
+          // A short beat between one call ending and the next thing that needs you.
+          if (justEnded && (m.type === "ringing" || m.type === "fax_requested" || m.type === "call_started")) await new Promise((r) => setTimeout(r, 700));
+        }
+        if (!current()) break;
+        pending.shift();
+        justEnded = m.type === "call_ended";
+        deliver(m);
+      }
+      draining = false;
+    };
+    const onMsg = (m: ServerMsg) => {
+      if (!current()) return;
+      if (src !== "live") { deliver(m); return; } // replay and mock pace themselves
+      pending.push(m);
+      void drain();
     };
     const startMock = () => {
       if (!current()) return;
@@ -195,8 +224,9 @@ export function useEngine() {
     speed: (secondsBetweenEvents: number) => send({ type: "control", action: "speed", value: secondsBetweenEvents }),
     pickup: (call_id: string) => send({ type: "pickup", call_id }),
     letRing: (call_id: string) => send({ type: "let_ring", call_id }),
-    say: (call_id: string, text: string) => { dispatch({ kind: "turnTaken", call_id }); send({ type: "say", call_id, text }); },
-    hangup: (call_id: string) => { dispatch({ kind: "turnTaken", call_id }); send({ type: "hangup", call_id }); },
+    // You replied, so you've read what came before: stop reading it out.
+    say: (call_id: string, text: string) => { speech.interrupt(); dispatch({ kind: "turnTaken", call_id }); send({ type: "say", call_id, text }); },
+    hangup: (call_id: string) => { speech.interrupt(); dispatch({ kind: "turnTaken", call_id }); send({ type: "hangup", call_id }); },
     sendFax: (request_id: string, text: string) => { dispatch({ kind: "faxSent" }); send({ type: "send_fax", request_id, text }); },
     decide: (escalation_id: string, option: string, note?: string, fields?: Record<string, string>) =>
       send({ type: "decide", escalation_id, option, ...(note ? { note } : {}), ...(fields && Object.keys(fields).length ? { fields } : {}) }),
