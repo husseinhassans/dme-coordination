@@ -67,6 +67,22 @@ class EscalationsMixin:
 
     async def _ambiguous(self, thread: ThreadName, missing: list[str], call_id: str | None,
                          tx: list[Transition] | None = None, **ctx: Any) -> None:
+        if ctx.get("kind") == "billing":
+            # The code was heard (and quoted); it just isn't the ordered one. Say that.
+            sid = ctx.get("sid")
+            billed = self._f(self.suppliers[sid].facts, "billed_hcpcs") if sid else None
+            who = self._name(sid) if sid else "The supplier"
+            heard = f"{who} says it will bill {billed}" if billed else f"{who} didn't give a billing code"
+            await self._escalate(
+                "AMBIGUOUS_CALL_OUTCOME", thread, tx if tx is not None else [],
+                title="Billing code doesn't match the order",
+                detail=f"{heard}, but the validated order is K0001. A wrong code on the claim gets it "
+                       "denied and can leave her with the bill, so a person sorts it out before the "
+                       "claim goes in (D11).",
+                question=f"{heard}; the order is K0001. Call them to correct it, then enter the code "
+                         "they'll bill. (fields: billed_hcpcs)",
+                call_ids=[call_id] if call_id else [], **ctx)
+            return
         await self._escalate(
             "AMBIGUOUS_CALL_OUTCOME", thread, tx if tx is not None else [],
             title="Required fact still unknown",
