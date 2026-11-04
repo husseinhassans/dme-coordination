@@ -76,7 +76,7 @@ def slim(run: dict, recorded_at: str) -> dict:
         "final_state": final["case_state"],
         "sim_start": first["now"],
         "sim_end": final["now"],
-        "api_spend_usd": 0.86,
+        "api_spend_usd": float(os.environ.get("SPEND_USD", "0")) or None,  # from the CLI's "~$X API spend" line
         "note": (
             "A recorded live run: every call, fax and decision was made by the real engine "
             "and LLM-played parties, with all seats on autopilot (including the advocate, "

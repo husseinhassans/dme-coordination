@@ -43,7 +43,7 @@ Without a key, the replay works and `?mock=1` gives a scripted practice mode.
 ```bash
 cd backend
 uv run python -m dme.cli --verbose        # whole case in the terminal, all parties on autopilot
-uv run pytest -q -m "not live"            # 89 tests: rules, transitions, every escalation path, e2e
+uv run pytest -q -m "not live"            # 90 tests: rules, transitions, every escalation path, e2e
 uv run pytest -q -m live                  # 6 tests against the real API, incl. prompt injection
 ```
 

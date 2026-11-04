@@ -32,7 +32,7 @@ export function StartScreen({ onGo, liveAvailable, onCancel, canListen }: { onGo
       <div className="mt-8 grid gap-4 md:grid-cols-2">
         <div className="card flex flex-col p-5">
           <div className="flex items-center gap-2 text-[16px] font-semibold"><PlayCircle size={18} className="text-accent" />Watch a real run</div>
-          <p className="mt-1.5 flex-1 text-[13.5px] text-muted">A recorded run with live model calls: 23 calls over two simulated weeks, one hand-off to a person, chair delivered. About three minutes to read, longer to listen. No setup.</p>
+          <p className="mt-1.5 flex-1 text-[13.5px] text-muted">A recorded run with live model calls: 22 calls over two simulated weeks, one hand-off to a person, chair delivered. About three minutes to read, longer to listen. No setup.</p>
           {listenBox}
           <button className="btn btn-primary mt-3 self-start px-4 py-1.5 text-[14px]" onClick={() => onGo({ source: "replay", listen })}>Watch the replay</button>
         </div>
