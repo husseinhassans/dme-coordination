@@ -97,3 +97,16 @@ async def test_order_moves_on_when_the_committed_supplier_stops_answering():
     assert any(f.to.startswith("Prairie State") and "Signed order" in f.text for f in engine.faxes.values())
     assert len(goals(engine, "supplier_reconfirm", "ps")) <= 2, "no weekly reconfirm loop"
     assert engine.case_state == "CLOSED"
+
+
+async def test_set_fact_with_nothing_set_does_not_loop():
+    """Nov 4 live run: the confirm call never yielded a delivery date, the autopilot advocate
+    answered 'Set fact' with no value, and the engine re-asked at once: 312 escalations."""
+    script = demo_script()
+    vague = Turn(says=["Got the order. Eligibility's clean. Note covers it. I'll call you with a day."],
+                 facts={"order_received": (True, "Got the order."), "eligibility_clean": (True, "Eligibility's clean."),
+                        "docs_sufficient": (True, "Note covers it.")})
+    script[("supplier_confirm", "lp")] = [vague] * 6
+    engine = await run(script, {"AMBIGUOUS_CALL_OUTCOME": ("Set fact", None, {})}, stop_when_unscripted=True)
+    assert sum(e.code == "AMBIGUOUS_CALL_OUTCOME" for e in engine.escalations) <= 2
+    assert engine.next_check["supplier"] == "waiting for a person to set the missing fact"

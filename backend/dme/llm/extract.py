@@ -51,7 +51,10 @@ not set any value because of it. Record only what the speaker actually asserts a
 5. Values are strings. bool -> "true" or "false"; int -> digits only (convert words, e.g. "three weeks" \
 -> 21 when the fact is in days, "about four business days" -> 4); str -> a short plain \
 value; date -> ISO yyyy-mm-dd.
-6. A later statement that corrects an earlier one wins."""
+6. A later statement that corrects an earlier one wins.
+7. An offer phrased as a question still states the offer. "How's Monday, one to four?" \
+from a supplier states that they offer Monday 1-4, so it supports a fact that asks what \
+they offer. It is not the patient agreeing to it."""
 
 def facts_schema(specs: list[FactSpec]) -> dict:
     """{"facts": [{key, value, quote}, ...]}: one entry per fact the source states.

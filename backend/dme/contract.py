@@ -342,7 +342,8 @@ CALL_PURPOSES: dict[str, list[FactSpec]] = {
         _f("order_received", B, "Supplier has the signed order and visit note"),
         _f("eligibility_clean", B, "Their eligibility check found no conflict (no same/similar wheelchair, right plan)"),
         _f("docs_sufficient", B, "Supplier says the documentation supports coverage"),
-        _f("delivery_date", S, "Delivery day and window they commit to"),
+        _f("delivery_date", S, "The delivery day and window they offer or agree to. It's provisional until the "
+                               "patient approves, which is expected: an offered day counts"),
     ],
     "supplier_delivery_check": [
         _f("delivered", B, "Supplier says the chair was delivered"),

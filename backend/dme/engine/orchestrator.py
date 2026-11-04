@@ -97,6 +97,7 @@ class Engine(EscalationsMixin, CaseFileMixin, PatientThread, SupplierThread, Ord
         self._post_miss_misses: dict[str, int] = {}
         self._confirm_misses: dict[str, int] = {}
         self._ranked_once = False
+        self._empty_answers: dict[tuple, int] = {}     # AMBIGUOUS answered with nothing set
         self._withdrawn: dict[str, datetime] = {}      # no-show suppliers told in writing not to bill
 
         # Order thread

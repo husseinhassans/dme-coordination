@@ -220,6 +220,21 @@ class EscalationsMixin:
         if kind == "supplier_screen" and self.suppliers[sid].state == "ESC_AMBIGUOUS":
             self._sup_move(sid, "CALLING", tx)
 
+        if not esc.decision_fields and kind in ("supplier_screen", "supplier_confirm", "pod_mismatch", "billing"):
+            # Nothing was set, so re-running the same rule would just raise the same question again.
+            n = self._empty_answers[(kind, sid)] = self._empty_answers.get((kind, sid), 0) + 1
+            if n == 1 and kind == "supplier_confirm":
+                when = cal.call_slot(cal.add_business_days(self._clock.now, 1))
+                self._clarified.discard(f"{sid}:confirm")
+                self.next_check["supplier"] = f"calling {self._name(sid)} again {fmt_day(when)}"
+                await self._decided(esc, f"Nothing was set, so the engine calls {self._name(sid)} once more "
+                                         f"on {fmt_day(when)} instead of asking again.", tx)
+                self._at(when, lambda: self._supplier_confirm(sid), f"confirm again {sid}")
+                return
+            self.next_check[esc.thread] = "waiting for a person to set the missing fact"
+            await self._decided(esc, "Nothing was set, and asking again would loop, so this thread waits for a "
+                                     "person to set the fact.", tx)
+            return
         await self._decided(esc, f"Advocate-set facts: {set_text}. The rules re-run.", tx)
 
         if kind == "address":
